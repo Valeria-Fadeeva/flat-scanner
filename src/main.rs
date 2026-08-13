@@ -250,7 +250,7 @@ async fn process_scan_frame(
     });
 
     // Бинаризация всего разворота (для превью/дальнейшей обработки)
-    let _binary_frame = cv::apply_sauvola_threshold(&rotated_frame, 0.2, 15)
+    let _binary_frame = cv::apply_sauvola_threshold(&corrected_page, 0.2, 15)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(ScanResponse {
