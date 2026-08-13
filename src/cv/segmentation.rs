@@ -22,17 +22,112 @@ pub struct PageVertices {
     pub p4: CustomPoint,
 }
 
+/// Coarse masking: отсечь потолок/лампы при открытой крышке сканера.
+/// Алгоритм:
+///   1. Сильное размытие → Otsu бинаризация (страница обычно темнее фона).
+///   2. Найти крупнейший контур по площади.
+///   3. Создать одноканальную маску из этого контура.
+///   4. Применить bitwise_and к исходному изображению.
+/// Возвращает очищенный кадр без ярких артефактов за пределами страницы.
+fn coarse_mask(src: &Mat) -> Result<Mat, String> {
+    let mut gray = Mat::default();
+    imgproc::cvt_color(
+        src,
+        &mut gray,
+        imgproc::COLOR_BGR2GRAY,
+        0,
+        core::AlgorithmHint::ALGO_HINT_APPROX,
+    )
+    .map_err(|e| e.to_string())?;
+
+    let mut blurred = Mat::default();
+    imgproc::gaussian_blur(
+        &gray,
+        &mut blurred,
+        Size::new(51, 51),
+        0.0,
+        0.0,
+        BORDER_DEFAULT,
+        core::AlgorithmHint::ALGO_HINT_APPROX,
+    )
+    .map_err(|e| e.to_string())?;
+
+    let mut thresh = Mat::default();
+    imgproc::threshold(&blurred, &mut thresh, 0.0, 255.0, imgproc::THRESH_BINARY_INV + imgproc::THRESH_OTSU)
+        .map_err(|e| e.to_string())?;
+
+    let mut contours_vec = Vector::<Vector::<Point>>::new();
+    imgproc::find_contours(
+        &thresh,
+        &mut contours_vec,
+        imgproc::RETR_EXTERNAL,
+        imgproc::CHAIN_APPROX_SIMPLE,
+        Point::new(0, 0),
+    )
+    .map_err(|e| e.to_string())?;
+
+    if contours_vec.is_empty() {
+        return Ok(src.clone());
+    }
+
+    let mut max_area = 0.0_f64;
+    let mut best_idx = 0_usize;
+    for i in 0..contours_vec.len() {
+        let contour = contours_vec.get(i).map_err(|e| e.to_string())?;
+        let area = geometry::contour_area(&contour, false).unwrap_or(0.0);
+        if area > max_area {
+            max_area = area;
+            best_idx = i;
+        }
+    }
+
+    // Если крупнейший объект слишком мал — маска не нужна (возможно, страница на весь кадр)
+    let image_area = src.rows() as f64 * src.cols() as f64;
+    if max_area < image_area * 0.05 {
+        return Ok(src.clone());
+    }
+
+    let mut mask = Mat::zeros(src.rows(), src.cols(), core::CV_8UC1)
+        .map_err(|e| e.to_string())?
+        .to_mat()
+        .map_err(|e| e.to_string())?;
+
+    // Пустая иерархия для draw_contours
+    let empty_hierarchy = Mat::default();
+    imgproc::draw_contours(
+        &mut mask,
+        &contours_vec,
+        best_idx as i32,
+        core::Scalar::new(255.0, 0.0, 0.0, 0.0),
+        -1,
+        imgproc::LINE_8,
+        &empty_hierarchy,
+        std::i32::MAX,
+        Point::new(0, 0),
+    )
+    .map_err(|e| e.to_string())?;
+
+    let mut result = Mat::default();
+    core::bitwise_and(src, src, &mut result, &mask)
+        .map_err(|e| e.to_string())?;
+
+    Ok(result)
+}
+
 /// Основная функция детекции разворота книги на кадре сканера.
 /// Использует HoughLinesP + кластеризацию углов → пересечение прямых → P₁..P₄.
 /// Fallback: findContours + approxPolyDP / minAreaRect.
 pub fn process_book_contours(src: &Mat) -> Result<PageVertices, String> {
+    // 0. Coarse masking: отсечь потолок/лампы перед детекцией линий Хафа
+    let masked_src = coarse_mask(src)?;
+
     let mut gray = Mat::default();
     let mut blurred = Mat::default();
     let mut edges = Mat::default();
 
     // 1. Предобработка
     imgproc::cvt_color(
-        src,
+        &masked_src,
         &mut gray,
         imgproc::COLOR_BGR2GRAY,
         0,
@@ -68,7 +163,7 @@ pub fn process_book_contours(src: &Mat) -> Result<PageVertices, String> {
 
     let hough_lines: Vec<Vec4i> = lines_vec.to_vec();
     if hough_lines.is_empty() {
-        return detect_vertices_by_contours(src, &gray);
+        return detect_vertices_by_contours(&masked_src, &gray);
     }
 
     // 3. Кластеризация по углам
@@ -80,7 +175,7 @@ pub fn process_book_contours(src: &Mat) -> Result<PageVertices, String> {
     }
 
     // Fallback на контурный поиск
-    detect_vertices_by_contours(src, &gray)
+    detect_vertices_by_contours(&masked_src, &gray)
 }
 
 /// Разделение отрезков Хафа на четыре группы по углу и позиции
