@@ -211,6 +211,107 @@ pub fn process_book_contours(src: &Mat) -> Result<PageVertices, String> {
     Err("Не удалось получить четыре вершины страницы ни одним методом".to_string())
 }
 
+/// Детекция угла скоса страницы по проекционной линии.
+/// Алгоритм:
+///   1. Бинаризация Otsu.
+///   2. Горизонтальная проекция (сумма черных пикселей по строкам).
+///   3. Поиск пиковов проекции (строки с текстом).
+///   4. Линейная регрессия по пикам → угол наклона.
+pub fn detect_skew_angle(src: &Mat) -> Result<f64, String> {
+    // Грейскейл
+    let mut gray = Mat::default();
+    if src.channels() > 1 {
+        imgproc::cvt_color(
+            src,
+            &mut gray,
+            imgproc::COLOR_BGR2GRAY,
+            0,
+            core::AlgorithmHint::ALGO_HINT_APPROX,
+        )
+        .map_err(|e| e.to_string())?;
+    } else {
+        gray = src.clone();
+    }
+
+    // Бинаризация Otsu
+    let mut thresh = Mat::default();
+    imgproc::threshold(&gray, &mut thresh, 0.0, 255.0, imgproc::THRESH_BINARY_INV + imgproc::THRESH_OTSU)
+        .map_err(|e| e.to_string())?;
+
+    // Горизонтальная проекция
+    let rows = thresh.rows() as usize;
+    let cols = thresh.cols() as usize;
+    let mut projection = vec![0.0_f64; rows];
+
+    for row in 0..rows {
+        let row_data = thresh.row(row as i32).map_err(|e| e.to_string())?;
+        let row_vec: Vec<Vec<u8>> = row_data.to_vec_2d().map_err(|e| e.to_string())?;
+        for col in 0..cols {
+            if row_vec[0][col] > 128 {
+                projection[row] += 1.0;
+            }
+        }
+    }
+
+    // Поиск пиковов (строки с текстом)
+    let threshold = projection.iter().sum::<f64>() / (projection.len() as f64) * 0.5;
+    let mut peaks: Vec<(i32, f64)> = Vec::new();
+    for (row, &val) in projection.iter().enumerate() {
+        if val > threshold {
+            peaks.push((row as i32, val));
+        }
+    }
+
+    if peaks.len() < 2 {
+        return Ok(0.0);
+    }
+
+    // Линейная регрессия: y = a*x + b, где x = row, y = projection[row]
+    let n = peaks.len() as f64;
+    let sum_x = peaks.iter().map(|(x, _)| *x as f64).sum::<f64>();
+    let sum_y = peaks.iter().map(|(_, y)| *y).sum::<f64>();
+    let sum_xy = peaks.iter().map(|(x, y)| (*x as f64) * *y).sum::<f64>();
+    let sum_x2 = peaks.iter().map(|(x, _)| (*x as f64) * (*x as f64)).sum::<f64>();
+
+    let denom = n * sum_x2 - sum_x * sum_x;
+    if denom.abs() < 1e-6 {
+        return Ok(0.0);
+    }
+
+    let a = (n * sum_xy - sum_x * sum_y) / denom;
+    let angle = (a as f64).atan() * 180.0 / std::f64::consts::PI;
+
+    Ok(angle)
+}
+
+/// Поворот изображения на заданный угол.
+pub fn rotate_image(src: &Mat, angle: f64) -> Result<Mat, String> {
+    if angle.abs() < 0.1 {
+        return Ok(src.clone());
+    }
+
+    let size = src.size().map_err(|e| e.to_string())?;
+    let center = Point2f::new(size.width as f32 / 2.0, size.height as f32 / 2.0);
+
+    let matrix = geometry::get_rotation_matrix_2d(center, angle, 1.0)
+        .map_err(|e| e.to_string())?;
+
+    let mut dst = Mat::default();
+    imgproc::warp_affine(
+        src,
+        &mut dst,
+        &matrix,
+        size,
+        imgproc::INTER_LINEAR,
+        core::BORDER_REPLICATE,
+        core::Scalar::all(255.0),
+        core::AlgorithmHint::ALGO_HINT_DEFAULT,
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(dst)
+}
+
 /// Сегментация разворота на левую и правую страницы.
 /// Алгоритм:
 ///   1. Найти середину разворота по X.

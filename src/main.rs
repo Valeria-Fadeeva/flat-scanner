@@ -260,16 +260,26 @@ async fn process_scan_frame(
             (corrected_page.clone(), corrected_page.clone())
         });
 
+    // Детекция и выравнивание скоса левой страницы
+    let left_skew = cv::detect_skew_angle(&left_page).unwrap_or(0.0);
+    println!("[📐 SKEW LEFT] Угол скоса левой страницы: {:.2}°", left_skew);
+    let left_aligned = cv::rotate_image(&left_page, -left_skew).unwrap_or(left_page.clone());
+
+    // Детекция и выравнивание скоса правой страницы
+    let right_skew = cv::detect_skew_angle(&right_page).unwrap_or(0.0);
+    println!("[📐 SKEW RIGHT] Угол скоса правой страницы: {:.2}°", right_skew);
+    let right_aligned = cv::rotate_image(&right_page, -right_skew).unwrap_or(right_page.clone());
+
     // Бинаризация каждой страницы отдельно
-    let binary_left = cv::apply_sauvola_threshold(&left_page, 0.2, 15)
+    let binary_left = cv::apply_sauvola_threshold(&left_aligned, 0.2, 15)
         .unwrap_or_else(|e| {
             println!("[⚠️ BIN LEFT] Ошибка бинаризации левой страницы: {}", e);
-            left_page.clone()
+            left_aligned.clone()
         });
-    let binary_right = cv::apply_sauvola_threshold(&right_page, 0.2, 15)
+    let binary_right = cv::apply_sauvola_threshold(&right_aligned, 0.2, 15)
         .unwrap_or_else(|e| {
             println!("[⚠️ BIN RIGHT] Ошибка бинаризации правой страницы: {}", e);
-            right_page.clone()
+            right_aligned.clone()
         });
 
     // Инвертация: бумага белая, текст черный
@@ -278,12 +288,12 @@ async fn process_scan_frame(
     opencv::core::bitwise_not(&binary_left, &mut final_left, &Mat::default())
         .unwrap_or_else(|e| {
             println!("[⚠️ INV LEFT] Ошибка инверсии левой страницы: {}", e);
-            left_page.clone().clone_into(&mut final_left);
+            left_aligned.clone().clone_into(&mut final_left);
         });
     opencv::core::bitwise_not(&binary_right, &mut final_right, &Mat::default())
         .unwrap_or_else(|e| {
             println!("[⚠️ INV RIGHT] Ошибка инверсии правой страницы: {}", e);
-            right_page.clone().clone_into(&mut final_right);
+            right_aligned.clone().clone_into(&mut final_right);
         });
 
     // Сохранение страниц
