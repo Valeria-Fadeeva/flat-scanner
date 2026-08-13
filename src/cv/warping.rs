@@ -1,0 +1,213 @@
+use opencv::{
+    core::{self, BORDER_DEFAULT, BORDER_TRANSPARENT, DECOMP_LU, Mat, Point2f, Size, Vec4i, Vector},
+    geometry,
+    imgproc,
+    prelude::*,
+};
+
+/// WarpPerspective: привести страницу к прямоугольному виду по вершинам P₁..P₄.
+/// Выход — изображение заданного размера (target_size).
+pub fn perspective_warp(src: &Mat, p1: Point2f, p2: Point2f, p3: Point2f, p4: Point2f, target_size: Size) -> Result<Mat, String> {
+    let mut src_pts_vec = Vector::<Point2f>::new();
+    for p in [p1, p2, p3, p4] {
+        src_pts_vec.push(p);
+    }
+
+    let mut dst_pts_vec = Vector::<Point2f>::new();
+    dst_pts_vec.push(Point2f::new(0.0, 0.0));
+    dst_pts_vec.push(Point2f::new(target_size.width as f32, 0.0));
+    dst_pts_vec.push(Point2f::new(target_size.width as f32, target_size.height as f32));
+    dst_pts_vec.push(Point2f::new(0.0, target_size.height as f32));
+
+    let m = geometry::get_perspective_transform(&src_pts_vec, &dst_pts_vec, DECOMP_LU)
+        .map_err(|e| e.to_string())?;
+
+    let mut warped = Mat::default();
+    imgproc::warp_perspective(
+        src,
+        &mut warped,
+        &m,
+        target_size,
+        imgproc::INTER_LINEAR,
+        BORDER_TRANSPARENT,
+        core::Scalar::default(),
+        core::AlgorithmHint::ALGO_HINT_APPROX,
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(warped)
+}
+
+/// De-warping корешка: выпрямление текста у изгиба страницы.
+/// Алгоритм:
+///   1. Бинаризация входного изображения (Otsu).
+///   2. Поиск вертикальных линий Хафа → группировка по колонкам X.
+///   3. Для каждой колонки вычислить смещение dx от идеальной вертикали.
+///   4. Построить карту remap: map_x[x][y] = x + dx(x), map_y[x][y] = y.
+///   5. Применить cv::remap с INTER_CUBIC для плавности.
+pub fn dewarp_spine(src: &Mat) -> Result<Mat, String> {
+    // 1. Грейскейл + бинаризация
+    let mut gray = Mat::default();
+    if src.channels() > 1 {
+        imgproc::cvt_color(
+            src,
+            &mut gray,
+            imgproc::COLOR_BGR2GRAY,
+            0,
+            opencv::core::AlgorithmHint::ALGO_HINT_APPROX,
+        )
+        .map_err(|e| e.to_string())?;
+    } else {
+        gray = src.clone();
+    }
+
+    let mut binary = Mat::default();
+    imgproc::threshold(&gray, &mut binary, 0.0, 255.0, imgproc::THRESH_BINARY_INV + imgproc::THRESH_OTSU)
+        .map_err(|e| e.to_string())?;
+
+    // 2. Вертикальные линии Хафа на бинарном изображении
+    let mut lines_vec = Vector::<Vec4i>::new();
+    imgproc::hough_lines_p(
+        &binary,
+        &mut lines_vec,
+        1.0,
+        std::f64::consts::PI / 180.0,
+        40,
+        30.0,
+        5.0,
+    )
+    .map_err(|e| e.to_string())?;
+
+    let hough_lines: Vec<Vec4i> = lines_vec.to_vec();
+    if hough_lines.is_empty() {
+        return Ok(src.clone());
+    }
+
+    // Отфильтровать только вертикальные (~90° ± 20°)
+    let verticals: Vec<&Vec4i> = hough_lines.iter().filter(|l| {
+        let dx = l[2] as f64 - l[0] as f64;
+        let dy = l[3] as f64 - l[1] as f64;
+        let angle = (dy.atan2(dx) * 180.0 / std::f64::consts::PI).rem_euclid(360.0);
+        (angle >= 70.0 && angle <= 110.0) || (angle >= 250.0 && angle <= 290.0)
+    }).collect();
+
+    if verticals.len() < 5 {
+        return Ok(src.clone());
+    }
+
+    // 3. Группировка по колонкам X и вычисление смещения dx для каждой колонки
+    let cols_usize = src.cols() as usize;
+    let mut col_offsets = vec![0.0_f32; cols_usize];
+    let mut col_counts = vec![0_u32; cols_usize];
+
+    for line in &verticals {
+        let mid_x = ((line[0] + line[2]) / 2) as usize;
+        if mid_x >= cols_usize { continue; }
+
+        // Смещение от идеальной вертикали: разница между x1 и x2
+        let dx = (line[2] as f32 - line[0] as f32) / 2.0;
+        col_offsets[mid_x] += dx;
+        col_counts[mid_x] += 1;
+    }
+
+    // Сглаживание смещений скользящим окном
+    let window = 15usize;
+    let mut smoothed = vec![0.0_f32; cols_usize];
+    for x in 0..cols_usize {
+        let left = if x > window { x - window } else { 0 };
+        let right = if x + window < cols_usize { x + window } else { cols_usize - 1 };
+
+        let mut sum_dx = 0.0_f32;
+        let mut sum_w = 0_u32;
+        for i in left..=right {
+            if col_counts[i] > 0 {
+                let avg = col_offsets[i] / col_counts[i] as f32;
+                sum_dx += avg;
+                sum_w += col_counts[i];
+            }
+        }
+        smoothed[x] = if sum_w > 0 { sum_dx / sum_w as f32 } else { 0.0 };
+    }
+
+    // Ограничить максимальное смещение, чтобы избежать артефактов
+    const MAX_OFFSET: f32 = 20.0;
+    for v in smoothed.iter_mut() {
+        *v = (*v).clamp(-MAX_OFFSET, MAX_OFFSET);
+    }
+
+    // 4. Построение карт remap
+    let rows = src.rows();
+    let cols = src.cols();
+
+    let mut map_x = Mat::zeros(rows, cols, opencv::core::CV_32F)
+        .map_err(|e| e.to_string())?
+        .to_mat()
+        .map_err(|e| e.to_string())?;
+
+    let mut map_y = Mat::zeros(rows, cols, opencv::core::CV_32F)
+        .map_err(|e| e.to_string())?
+        .to_mat()
+        .map_err(|e| e.to_string())?;
+
+    unsafe {
+        let ptr_x = map_x.data_mut() as *mut f32;
+        let ptr_y = map_y.data_mut() as *mut f32;
+
+        for y in 0..rows {
+            for x in 0..cols_usize {
+                let idx = y as usize * cols_usize + x;
+                *ptr_x.add(idx) = x as f32 + smoothed[x];
+                *ptr_y.add(idx) = y as f32;
+            }
+        }
+    }
+
+    // 5. Применить remap
+    let mut result = Mat::default();
+    imgproc::remap(
+        src,
+        &mut result,
+        &map_x,
+        &map_y,
+        imgproc::INTER_CUBIC,
+        BORDER_DEFAULT,
+        core::Scalar::default(),
+        core::AlgorithmHint::ALGO_HINT_APPROX,
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_perspective_warp_identity() {
+        let size = Size::new(100, 100);
+        let mut src = Mat::zeros(size.height, size.width, opencv::core::CV_8UC3)
+            .unwrap()
+            .to_mat()
+            .unwrap();
+
+        // Заполнить тестовым паттерном
+        unsafe {
+            let data = std::slice::from_raw_parts_mut(src.data_mut().as_mut_ptr(), src.data_len());
+            for i in 0..data.len() / 3 {
+                data[i * 3] = (i % 256) as u8;       // B
+                data[i * 3 + 1] = ((i * 2) % 256) as u8; // G
+                data[i * 3 + 2] = ((i * 3) % 256) as u8; // R
+            }
+        }
+
+        let p1 = Point2f::new(0.0, 0.0);
+        let p2 = Point2f::new(100.0, 0.0);
+        let p3 = Point2f::new(100.0, 100.0);
+        let p4 = Point2f::new(0.0, 100.0);
+
+        let warped = perspective_warp(&src, p1, p2, p3, p4, size).unwrap();
+        assert_eq!(warped.rows(), 100);
+        assert_eq!(warped.cols(), 100);
+    }
+}
