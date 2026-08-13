@@ -1,5 +1,5 @@
 use opencv::{
-    core::{self, BORDER_DEFAULT, Mat, Point, Point2f, Size, Vec4i, Vector},
+    core::{self, BORDER_DEFAULT, Mat, Point, Point2f, Size, Vector},
     geometry,
     imgproc,
     prelude::*,
@@ -98,227 +98,64 @@ fn coarse_mask(src: &Mat) -> Result<Mat, String> {
         &mut mask,
         &contours_vec,
         best_idx as i32,
-        core::Scalar::new(255.0, 0.0, 0.0, 0.0),
+        core::Scalar::all(255.0),
         -1,
-        imgproc::LINE_8,
+        -1,
         &empty_hierarchy,
-        std::i32::MAX,
+        0,
         Point::new(0, 0),
     )
     .map_err(|e| e.to_string())?;
 
     let mut result = Mat::default();
-    core::bitwise_and(src, src, &mut result, &mask)
+    core::bitwise_and(src, &mask, &mut result, &Mat::default())
         .map_err(|e| e.to_string())?;
 
     Ok(result)
 }
 
-/// Основная функция детекции разворота книги на кадре сканера.
-/// Использует HoughLinesP + кластеризацию углов → пересечение прямых → P₁..P₄.
-/// Fallback: findContours + approxPolyDP / minAreaRect.
+/// Детекция вершин страницы на бинарном изображении.
+/// Алгоритм:
+///   1. Coarse masking для отсечения артефактов.
+///   2. Бинаризация Otsu.
+///   3. Поиск контуров → крупнейший контур.
+///   4. Аппроксимация полигоном (approxPolyDP) до 4 точек.
+///   5. Если не 4 точки → minAreaRect.
+///   6. Сортировка вершин TL → TR → BR → BL.
 pub fn process_book_contours(src: &Mat) -> Result<PageVertices, String> {
-    // 0. Coarse masking: отсечь потолок/лампы перед детекцией линий Хафа
-    let masked_src = coarse_mask(src)?;
+    // Coarse masking
+    let masked = coarse_mask(src)?;
 
+    // Грейскейл
     let mut gray = Mat::default();
-    let mut blurred = Mat::default();
-    let mut edges = Mat::default();
-
-    // 1. Предобработка
-    imgproc::cvt_color(
-        &masked_src,
-        &mut gray,
-        imgproc::COLOR_BGR2GRAY,
-        0,
-        core::AlgorithmHint::ALGO_HINT_APPROX,
-    )
-    .map_err(|e| e.to_string())?;
-
-    imgproc::gaussian_blur(
-        &gray,
-        &mut blurred,
-        Size::new(7, 7),
-        0.0,
-        0.0,
-        BORDER_DEFAULT,
-        core::AlgorithmHint::ALGO_HINT_APPROX,
-    )
-    .map_err(|e| e.to_string())?;
-
-    imgproc::canny(&blurred, &mut edges, 50.0, 150.0, 3, false).map_err(|e| e.to_string())?;
-
-    // 2. Прямые Хафа
-    let mut lines_vec = Vector::<Vec4i>::new();
-    imgproc::hough_lines_p(
-        &edges,
-        &mut lines_vec,
-        1.0,
-        std::f64::consts::PI / 180.0,
-        80,
-        50.0,
-        10.0,
-    )
-    .map_err(|e| e.to_string())?;
-
-    let hough_lines: Vec<Vec4i> = lines_vec.to_vec();
-    if hough_lines.is_empty() {
-        return detect_vertices_by_contours(&masked_src, &gray);
+    if masked.channels() > 1 {
+        imgproc::cvt_color(
+            &masked,
+            &mut gray,
+            imgproc::COLOR_BGR2GRAY,
+            0,
+            core::AlgorithmHint::ALGO_HINT_APPROX,
+        )
+        .map_err(|e| e.to_string())?;
+    } else {
+        gray = masked.clone();
     }
 
-    // 3. Кластеризация по углам
-    let (top_lines, bottom_lines, left_lines, right_lines) = cluster_hough_lines(&hough_lines, src);
-
-    // 4. Попытка восстановить вершины через пересечение репрезентативных прямых
-    if let Some(vertices) = compute_vertices_from_clusters(&top_lines, &bottom_lines, &left_lines, &right_lines) {
-        return Ok(vertices);
-    }
-
-    // Fallback на контурный поиск
-    detect_vertices_by_contours(&masked_src, &gray)
-}
-
-/// Разделение отрезков Хафа на четыре группы по углу и позиции
-fn cluster_hough_lines<'a>(lines: &'a [Vec4i], src: &'a Mat) -> (Vec<&'a Vec4i>, Vec<&'a Vec4i>, Vec<&'a Vec4i>, Vec<&'a Vec4i>) {
-    let mut top_lines: Vec<&Vec4i> = Vec::new();
-    let mut bottom_lines: Vec<&Vec4i> = Vec::new();
-    let mut left_lines: Vec<&Vec4i> = Vec::new();
-    let mut right_lines: Vec<&Vec4i> = Vec::new();
-
-    for line in lines.iter() {
-        let dx = line[2] as f64 - line[0] as f64;
-        let dy = line[3] as f64 - line[1] as f64;
-        let angle = (dy.atan2(dx) * 180.0 / std::f64::consts::PI).rem_euclid(360.0);
-
-        // Горизонтальные (~0° или ~180°)
-        if angle < 25.0 || angle > 155.0 {
-            let mid_y = (line[1] + line[3]) / 2;
-            if mid_y < src.rows() / 2 {
-                top_lines.push(line);
-            } else {
-                bottom_lines.push(line);
-            }
-        }
-        // Вертикальные (~90°)
-        else if angle >= 65.0 && angle <= 115.0 {
-            let mid_x = (line[0] + line[2]) / 2;
-            if mid_x < src.cols() / 2 {
-                left_lines.push(line);
-            } else {
-                right_lines.push(line);
-            }
-        }
-    }
-
-    (top_lines, bottom_lines, left_lines, right_lines)
-}
-
-/// Получить одну репрезентативную прямую из кластера отрезков (взвешенная медиана)
-fn representative_line(lines: &[&Vec4i]) -> Option<(Point, Point)> {
-    if lines.is_empty() {
-        return None;
-    }
-
-    let mut total_len = 0.0_f64;
-    let mut sum_x1 = 0.0_f64;
-    let mut sum_y1 = 0.0_f64;
-    let mut sum_x2 = 0.0_f64;
-    let mut sum_y2 = 0.0_f64;
-
-    for l in lines {
-        let dx = l[2] as f64 - l[0] as f64;
-        let dy = l[3] as f64 - l[1] as f64;
-        let len = (dx * dx + dy * dy).sqrt();
-        total_len += len;
-        sum_x1 += l[0] as f64 * len;
-        sum_y1 += l[1] as f64 * len;
-        sum_x2 += l[2] as f64 * len;
-        sum_y2 += l[3] as f64 * len;
-    }
-
-    if total_len < 1.0 {
-        return None;
-    }
-
-    let cx1 = sum_x1 / total_len;
-    let cy1 = sum_y1 / total_len;
-    let cx2 = sum_x2 / total_len;
-    let cy2 = sum_y2 / total_len;
-
-    let dir_x = cx2 - cx1;
-    let dir_y = cy2 - cy1;
-    let norm = (dir_x * dir_x + dir_y * dir_y).sqrt();
-    if norm < 1e-6 {
-        return None;
-    }
-
-    // Экстраполируем линию далеко за пределы изображения для надёжного пересечения
-    let scale = 5000.0 / norm;
-    let ext_x = dir_x * scale;
-    let ext_y = dir_y * scale;
-
-    Some((
-        Point::new((cx1 - ext_x) as i32, (cy1 - ext_y) as i32),
-        Point::new((cx1 + ext_x) as i32, (cy1 + ext_y) as i32),
-    ))
-}
-
-/// Точка пересечения двух прямых (p1-p2) и (p3-p4)
-fn line_intersection(p1: Point, p2: Point, p3: Point, p4: Point) -> Option<Point> {
-    let x1 = p1.x as f64;
-    let y1 = p1.y as f64;
-    let x2 = p2.x as f64;
-    let y2 = p2.y as f64;
-    let x3 = p3.x as f64;
-    let y3 = p3.y as f64;
-    let x4 = p4.x as f64;
-    let y4 = p4.y as f64;
-
-    let denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
-    if denom.abs() < 1e-6 {
-        return None; // параллельны
-    }
-
-    let t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom;
-    let ix = (x1 + t * (x2 - x1)).round() as i32;
-    let iy = (y1 + t * (y2 - y1)).round() as i32;
-    Some(Point::new(ix, iy))
-}
-
-/// Восстановить вершины из четырёх кластеров линий
-fn compute_vertices_from_clusters(
-    top_lines: &[&Vec4i],
-    bottom_lines: &[&Vec4i],
-    left_lines: &[&Vec4i],
-    right_lines: &[&Vec4i],
-) -> Option<PageVertices> {
-    let tl = representative_line(top_lines)?;
-    let bl = representative_line(bottom_lines)?;
-    let ll = representative_line(left_lines)?;
-    let rl = representative_line(right_lines)?;
-
-    let p1 = line_intersection(tl.0, tl.1, ll.0, ll.1)?; // верх × лево
-    let p2 = line_intersection(tl.0, tl.1, rl.0, rl.1)?; // верх × право
-    let p3 = line_intersection(bl.0, bl.1, rl.0, rl.1)?; // низ × право
-    let p4 = line_intersection(bl.0, bl.1, ll.0, ll.1)?; // низ × лево
-
-    Some(PageVertices {
-        p1: CustomPoint { x: p1.x, y: p1.y },
-        p2: CustomPoint { x: p2.x, y: p2.y },
-        p3: CustomPoint { x: p3.x, y: p3.y },
-        p4: CustomPoint { x: p4.x, y: p4.y },
-    })
-}
-
-/// Fallback: детекция через findContours → approxPolyDP / minAreaRect
-fn detect_vertices_by_contours(src: &Mat, gray: &Mat) -> Result<PageVertices, String> {
+    // Бинаризация Otsu
     let mut thresh = Mat::default();
-    imgproc::threshold(gray, &mut thresh, 0.0, 255.0, imgproc::THRESH_BINARY_INV + imgproc::THRESH_OTSU)
+    imgproc::threshold(&gray, &mut thresh, 0.0, 255.0, imgproc::THRESH_BINARY_INV + imgproc::THRESH_OTSU)
         .map_err(|e| e.to_string())?;
 
+    // Поиск контуров
     let mut contours_vec = Vector::<Vector::<Point>>::new();
-    imgproc::find_contours(&thresh, &mut contours_vec, imgproc::RETR_EXTERNAL, imgproc::CHAIN_APPROX_SIMPLE, Point::new(0, 0))
-        .map_err(|e| e.to_string())?;
+    imgproc::find_contours(
+        &thresh,
+        &mut contours_vec,
+        imgproc::RETR_EXTERNAL,
+        imgproc::CHAIN_APPROX_SIMPLE,
+        Point::new(0, 0),
+    )
+    .map_err(|e| e.to_string())?;
 
     if contours_vec.is_empty() {
         return Err("Не обнаружено ни одного контура для детекции страницы".to_string());
@@ -372,6 +209,65 @@ fn detect_vertices_by_contours(src: &Mat, gray: &Mat) -> Result<PageVertices, St
     }
 
     Err("Не удалось получить четыре вершины страницы ни одним методом".to_string())
+}
+
+/// Сегментация разворота на левую и правую страницы.
+/// Алгоритм:
+///   1. Найти середину разворота по X.
+///   2. Разделить изображение на две половины.
+///   3. Для каждой половины найти bounding box контента.
+///   4. Вернуть обрезанные страницы.
+pub fn segment_pages(src: &Mat) -> Result<(Mat, Mat), String> {
+    let size = src.size().map_err(|e| e.to_string())?;
+    let half_width = size.width / 2;
+
+    // Разделить на левую и правую половины
+    let left_roi = Mat::col_bounds(src, 0, half_width).map_err(|e| e.to_string())?;
+    let right_roi = Mat::col_bounds(src, half_width, size.width).map_err(|e| e.to_string())?;
+
+    let left_mat = left_roi.clone_pointee();
+    let right_mat = right_roi.clone_pointee();
+
+    // Обрезать каждую половину до контента
+    let left_cropped = crop_to_content(&left_mat)?;
+    let right_cropped = crop_to_content(&right_mat)?;
+
+    Ok((left_cropped, right_cropped))
+}
+
+/// Обрезка изображения до bounding box контента.
+fn crop_to_content(src: &Mat) -> Result<Mat, String> {
+    // Грейскейл
+    let mut gray = Mat::default();
+    if src.channels() > 1 {
+        imgproc::cvt_color(
+            src,
+            &mut gray,
+            imgproc::COLOR_BGR2GRAY,
+            0,
+            core::AlgorithmHint::ALGO_HINT_APPROX,
+        )
+        .map_err(|e| e.to_string())?;
+    } else {
+        gray = src.clone();
+    }
+
+    // Бинаризация Otsu
+    let mut thresh = Mat::default();
+    imgproc::threshold(&gray, &mut thresh, 0.0, 255.0, imgproc::THRESH_BINARY_INV + imgproc::THRESH_OTSU)
+        .map_err(|e| e.to_string())?;
+
+    // Найти bounding box
+    let bbox = geometry::bounding_rect(&thresh).map_err(|e| e.to_string())?;
+
+    // Проверка валидности
+    if bbox.width <= 0 || bbox.height <= 0 {
+        return Ok(src.clone());
+    }
+
+    // Обрезать
+    let roi = src.roi(bbox).map_err(|e| e.to_string())?;
+    Ok(roi.clone_pointee())
 }
 
 /// Сортировка четырёх точек в порядке TL → TR → BR → BL

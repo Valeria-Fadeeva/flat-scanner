@@ -5,7 +5,7 @@ pub mod warping;
 
 // Реэкспорт структур данных для чистоты вызовов в main.rs
 pub use binarization::apply_sauvola_threshold;
-pub use segmentation::{CustomPoint, PageVertices, process_book_contours};
+pub use segmentation::{CustomPoint, PageVertices, process_book_contours, segment_pages};
 pub use warping::{dewarp_spine, perspective_warp};
 
 /// Полная коррекция страницы: перспективная трансформация + деварпинг корешка.

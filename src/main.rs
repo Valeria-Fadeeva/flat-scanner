@@ -253,6 +253,13 @@ async fn process_scan_frame(
     let _binary_frame = cv::apply_sauvola_threshold(&corrected_page, 0.2, 15)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // Сегментация разворота на левую и правую страницы
+    let (_left_page, _right_page) = cv::segment_pages(&corrected_page)
+        .unwrap_or_else(|e| {
+            println!("[⚠️ SEGMENT] Ошибка сегментации: {}. Использую исходный кадр.", e);
+            (corrected_page.clone(), corrected_page.clone())
+        });
+
     Ok(Json(ScanResponse {
         status: "PreviewReady".to_string(),
         uuid: payload.uuid,
