@@ -235,6 +235,20 @@ async fn process_scan_frame(
         payload.uuid, vertices
     );
 
+    // Полная коррекция страницы: перспективная трансформация + деварпинг корешка
+    const PAGE_WIDTH: u32 = 2400;
+    const PAGE_HEIGHT: u32 = 3200;
+    let corrected_page = cv::rectify_and_dewarp_page(
+        &rotated_frame,
+        &vertices,
+        PAGE_WIDTH,
+        PAGE_HEIGHT,
+    )
+    .unwrap_or_else(|e| {
+        println!("[⚠️ CORRECT] Ошибка коррекции: {}. Использую исходный кадр.", e);
+        rotated_frame.clone()
+    });
+
     // Бинаризация всего разворота (для превью/дальнейшей обработки)
     let _binary_frame = cv::apply_sauvola_threshold(&rotated_frame, 0.2, 15)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
