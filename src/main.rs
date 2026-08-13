@@ -197,17 +197,46 @@ async fn process_scan_frame(
 ) -> Result<Json<ScanResponse>, (StatusCode, String)> {
     let start_time = std::time::Instant::now();
 
-    let dummy_frame = opencv::core::Mat::new_rows_cols_with_default(
-        4700,
-        3300,
-        opencv::core::CV_8UC3,
-        opencv::core::Scalar::new(240.0, 240.0, 240.0, 0.0),
+    // Блокирующий вызов scanimage выполняем в отдельном потоке, чтобы не фризить Tokio event-loop
+    let captured_frame = tokio::task::spawn_blocking(|| -> Result<Mat, String> {
+        println!("[⚙️ HARDWARE]: Поиск планшетных сканеров на USB-шине...");
+        let device_name = sane_core::detect_hardware_scanner()
+            .map_err(|e| format!("Аппаратный сбой при обнаружении сканера: {}", e))?;
+
+        println!("[📷 CAPTURE]: Захват кадра со сканера '{}'", device_name);
+        let mat = sane_core::capture_sane_frame(&device_name)
+            .map_err(|e| format!("Ошибка захвата матрицы SANE: {}", e))?;
+
+        if mat.empty() {
+            return Err("Получен пустой буфер кадра от сканера".to_string());
+        }
+
+        Ok(mat)
+    })
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Panic в spawn_blocking: {:?}", e)))?
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    // Принудительный разворот кадра А3 на 90° по часовой стрелке (как в CLI конвейере)
+    let mut rotated_frame = Mat::default();
+    opencv::core::rotate(
+        &captured_frame,
+        &mut rotated_frame,
+        opencv::core::ROTATE_90_CLOCKWISE,
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let vertices = cv::process_book_contours(&dummy_frame)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let _binary_frame = cv::apply_sauvola_threshold(&dummy_frame, 0.2, 15)
+    // Детекция вершин страницы на развернутом кадре
+    let vertices = cv::process_book_contours(&rotated_frame)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("CV error: {}", e)))?;
+
+    println!(
+        "[📐 WEB CV]: Вершины восстановлены для UUID {}: {:?}",
+        payload.uuid, vertices
+    );
+
+    // Бинаризация всего разворота (для превью/дальнейшей обработки)
+    let _binary_frame = cv::apply_sauvola_threshold(&rotated_frame, 0.2, 15)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(ScanResponse {

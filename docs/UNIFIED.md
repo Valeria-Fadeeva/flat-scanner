@@ -70,7 +70,9 @@
 │                                     │
 │ Computer Vision Pipeline            │
 │ ├─ сегментация макрообъектов        │
-│ ├─ HoughLinesP + восстановление P₄  │
+│ ├─ HoughLinesP + кластеризация углов│
+│ ├─ пересечение прямых Lᵢ → P₁..P₄   │
+│ ├─ fallback: findContours/approxPolyDP│
 │ ├─ деварпинг корешка                │
 │ ├─ Sauvola адаптивная бинаризация   │
 │ └─ экспорт CCITT G4                 │
@@ -83,7 +85,7 @@
 
 ## Режимы работы Rust-ядра
 
-1. **Web Mode** (дефолт): Axum-сервер на `127.0.0.1:54321` для взаимодействия с Flutter через JSON-API.
+1. **Web Mode** (дефолт): Axum-сервер на `127.0.0.1:54321` для взаимодействия с Flutter через JSON-API. Реальный захват со сканера через `spawn_blocking`.
 2. **CLI Mode** (`--cli` флаг): автономный конвейер без сервера — чтение файла или прямой захват со сканера → обработка → сохранение PNG/TIFF в папку `./split`.
 
 ---
@@ -135,31 +137,39 @@
 
 > ❌ НЕ РЕАЛИЗОВАНО.
 
-## 4.3 Алгоритм детекции четырёх вершин
+## 4.3 Алгоритм детекции четырёх вершин ✅ Реализован
 
-Вместо прямого поиска углов через `findContours`, Rust-ядро использует вероятностное преобразование Хафа `HoughLinesP`:
+Детекция использует двухэтапную стратегию: первично HoughLinesP + кластеризацию углов, fallback — findContours + аппроксимация.
 
-1. Выделение протяжённых линейных сегментов краёв бумаги
-2. Группировка найденных отрезков в четыре основных вектора L₁(Верх), L₂(Низ), L₃(Лево), L₄(Право). Паразиты фильтруются по углу наклона и удалению от центра.
-3. Координаты утерянной вершины P₄ вычисляются математически как точка пересечения двух соответствующих векторов границ. Алгоритм принудительно продлевает линии до их физического пересечения, игнорируя тень корешка или дефект сканирования.
+### Первичный метод: HoughLinesP + кластеризация
 
-Формула восстановления четвертой вершины при наличии трёх известных точек параллелограмма:
+1. Выделение протяжённых линейных сегментов через `HoughLinesP` (ρ=1.0, θ=π/180, threshold=80, minLen=50, maxGap=10).
+2. Кластеризация отрезков по углу наклона в четыре группы:
+   * **top_lines**: горизонтальные (~0° или ~180°), mid_y < src.rows()/2
+   * **bottom_lines**: горизонтальные, mid_y ≥ src.rows()/2
+   * **left_lines**: вертикальные (~65–115°), mid_x < src.cols()/2
+   * **right_lines**: вертикальные, mid_x ≥ src.cols()/2
+3. Для каждого кластера вычисляется репрезентативная прямая как взвешенная медиана отрезков (вес = длина отрезка). Прямые экстраполируются за пределы изображения (scale=5000/norm) для надёжного пересечения.
+4. Вершины P₁..P₄ вычисляются как точки пересечения пар прямых:
+   * P₁ = top ∩ left (верхний левый угол)
+   * P₂ = top ∩ right (верхний правый угол)
+   * P₃ = bottom ∩ right (нижний правый угол)
+   * P₄ = bottom ∩ left (нижний левый угол)
 
-```math
-P_4 = P_1 + (P_3 - P_2)
-```
+Если один из кластеров пуст или прямые параллельны (denom < 1e-6) — переход к fallback.
 
-где P₁ — левый верхний угол, P₂ — правый верхний, P₃ — правый нижний.
+### Fallback: findContours + approxPolyDP / minAreaRect
 
-> ⚠️ ЧАСТИЧНО РЕАЛИЗОВАНО: Pipeline Canny→Blur→HoughLinesP работает, но возвращает статические заглушки p1=(100,100), p2=(2000,95), p3=(1980,2900). Требуется реализовать кластеризацию сегментов по углу наклона → экстраполяция прямых Lᵢ → вычисление точек пересечений.
+1. Бинаризация Otsu (`THRESH_BINARY_INV + THRESH_OTSU`)
+2. Поиск контуров (`RETR_EXTERNAL`, `CHAIN_APPROX_SIMPLE`)
+3. Выбор самого крупного контура по площади (минимум 1% от площади кадра)
+4. Аппроксимация многоугольником `approxPolyDP(ε = perimeter × 0.02)`
+5. Если получено ровно 4 вершины → сортировка TL→TR→BR→BL и возврат результата
+6. Иначе: `minAreaRect` на лучшем контуре → 4 угла прямоугольника → сортировка
 
-### Коллизия Б: Сбой Хафа на текстурированном потолке
+Сортировка четырёх точек: упорядочивание по сумме x+y (диагональная проекция), затем разделение на верхнюю/нижнюю пары и сортировка внутри каждой пары по X.
 
-При открытой крышке длинные потолочные лампы и текстура плитки попадают в кадр. HoughLinesP может детектировать ложные параллельные линии за пределами книги, которые окажутся длиннее истинных краёв бумаги.
-
-**Решение:** Перед запуском Хафа применить маскирование:
-* Жесткий threshold/Otsu binarization на сильно размытом Гауссом изображении низкого разрешения для получения грубой маски книги
-* Всё за пределами маски залить чёрным (`cv::bitwise_and`) — изолировать Хаф внутри зоны бумажного листа
+> ⚠️ **Коллизия Б:** При открытой крышке текстура потолка может давать ложные линии Хафа длиннее истинных краёв бумаги. Требуется coarse_masking до детекции Хафа согласно docs/проверить.md.
 
 ## 4.4 Устранение деформаций корешка (Деварпинг / De-warping)
 
@@ -305,7 +315,7 @@ UI строится вокруг потокового рендеринга пр�
 
 # 10. ТЕКУЩЕЕ СОСТОЯНИЕ КОДОВОЙ БАЗЫ (AUDIT)
 
-Проект представляет собой рабочий прототип Rust Core Engine с двумя режимами работы.
+Проект представляет собой рабочий прототип Rust Core Engine с двумя режимами работы. Сборка проходит успешно (`cargo check` OK).
 
 ## Структура файлов
 
@@ -316,7 +326,7 @@ UI строится вокруг потокового рендеринга пр�
 | `src/main.rs` | Двухрежимное ядро: CLI конвейер / Axum Web API сервер; маршруты REST endpoints | ~219 | ✅ Работает |
 | `src/sane_core.rs` | Автообнаружение сканера scanimage -L + захват TIFF RAW @300 DPI → OpenCV Mat из RAM буфера без диска | ~110 | ✅ Работает |
 | `src/cv/mod.rs` | Реэкспорт публичных структур PageVertices, apply_sauvola_threshold, process_book_contours | ~6 | ✅ Готово |
-| `src/cv/segmentation.rs` | Canny → Gaussian Blur → HoughLinesP контурная детекция вершин страницы | ~81 | ⚠️ Частично (заглушки P₁..P₄) |
+| `src/cv/segmentation.rs` | HoughLinesP + кластеризация углов → пересечение прямых → P₁..P₄; fallback: findContours/approxPolyDP/minAreaRect | ~280 | ✅ Работает |
 | `src/cv/binarization.rs` | Полная реализация адаптивной бинаризации Сауволы T(x,y) со скользящим окном box_filter | ~141 | ✅ Полностью готово |
 
 ## 10.1 РЕАЛИЗОВАНО ✅
@@ -330,15 +340,16 @@ UI строится вокруг потокового рендеринга пр�
 | R5 | **Бинаризация Сауволы** — полная формула m·[1+k(s/R−1)] через локальные mean/variance/std_dev расчёты box_filter(window_size×window_size) без внешних библиотек | `cv/binarization.rs`: apply_sauvola_threshold(src,k,win_sz) | Код соответствует патчу из docs/проверить.md; использует раздельные буферы t_factor1..t_factor_final для избежания aliasing артефактов |
 | R6 | **Обработка ошибок Result<T,E>** вместо unwrap()/panic! — все CV функции возвращают String ошибки вверх стека до main/handler уровня | Весь код Rust ядра | Соблюдено инженерное правило §9 ТЗ |
 | R7 | **Release профиль компиляции LTO + opt-level 3 + codegen-units=1 + panic="abort"** для минимизации размера бинарника и максимальной скорости вычислений | Cargo.toml [profile.release] секция | Готово к production сборке Linux дистрибутива |
+| R8 | **Реальная детекция вершин P₁..P₄ из HoughLinesP** — кластеризация сегментов по углу наклона (top/bottom/left/right), взвешенная медиана отрезков, экстраполяция прямых, вычисление точек пересечения | `cv/segmentation.rs`: cluster_hough_lines(), representative_line(), line_intersection(), compute_vertices_from_clusters() | Заглушки p1=(100,100)... удалены. Вершины вычисляются математически из реальных линий Хафа |
+| R9 | **Fallback детекция через findContours/approxPolyDP/minAreaRect** — если HoughLinesP не дал достаточно линий или кластеры пусты | `cv/segmentation.rs`: detect_vertices_by_contours() | Otsu бинаризация → поиск крупнейшего контура → approxPolyDP(ε=perimeter×0.02) → minAreaRect как последний шанс → сортировка TL→TR→BR→BL |
+| R10 | **Web API handler process_scan_frame использует реальный захват SANE** — блокирующий scanimage обернут в tokio::task::spawn_blocking | `main.rs`: process_scan_frame() | Dummy-frame Mat(4700×3300, Scalar=240) заменён на реальный captured_mat со сканера. Ответ JSON включает настоящие вершины PageVertices |
 
 ## 10.2 ЧАСТИЧНО РЕАЛИЗОВАНО ⚠️
 
 | # | Требование | Где | Проблема / Заглушка |
 |---|------------|-----|---------------------|
-| P1 | **HoughLinesP детекция четырёх вершин страницы** (L₁–L₄ группировка отрезков + пересечения точек P₁–P₄) | `cv/segmentation.rs`: process_book_contours() | Функция корректно вызывает Canny→Blur→HoughLinesP и получает Vector<Vec4i> линий, НО затем игнорирует их и возвращает статический параллелограмм: p1=(100,100), p2=(2000,95), p3=(1980,2900). Требуется реализовать кластеризацию найденных сегментов по углу наклона → экстраполяция прямых Lᵢ → вычисление координат Pⱼ как точек пересечений Lᵢ∩Lⱼ с учётом деформаций тени корешка книги |
-| P2 | **Web API использует dummy-frame вместо реального захвата SANE** | `main.rs`: process_scan_frame handler | Для тестирования создан фиктивный Mat(4700×3300, Scalar=240). После стабилизации Flutter HTTP клиента нужно подключить вызов sane_core::capture_sane_frame(device) внутри асинхронного хендлера (через tokio::task::spawn_blocking ради блокирующего scanimage), чтобы передавать во Flutter настоящие вершины и превью разворота со сканера |
-| P3 | **Сегментация макрообъектов / изоляция зоны книги от потолка ламп перед HoughLinesP** | Частично заложено в segmentation.rs через Canny/Gaussian Blur | Нет грубой маски Otsu или contour.area()-фильтра до запуска Хафа. При открытой крышке текстура потолка попадает в анализ линий → ложные параллельные отрезки могут быть длиннее истинных краёв бумаги и сломать геометрию P₁..P₄. Требуется добавить этап coarse_masking(src) → bitwise_and(mask_zone) перед hough_lines_p() согласно Коллизии Б из docs/проверить.md |
-| P4 | **Изоляция боковых артефактов ("боковушек") толстых книг при раскрытии на сканере** | Не реализовано вовсе; упоминание только в ТЗ §4.2 | Необходимо внедрить градиентный анализ плотности по периферии macro-contour: если обнаружен паттерн "частые чередующиеся светлые/тёмные линии" (слои предыдущих/последующих страниц), рамку детекции принудительно сдвинуть внутрь на шаг дефекта. Это предотвратит включение торцевых полосок страницы в контур книги |
+| P1 | **Сегментация макрообъектов / изоляция зоны книги от потолка ламп перед HoughLinesP** | Частично заложено в segmentation.rs через Canny/Gaussian Blur | Нет грубой маски Otsu или contour.area()-фильтра до запуска Хафа. При открытой крышке текстура потолка попадает в анализ линий → ложные параллельные отрезки могут быть длиннее истинных краёв бумаги и сломать геометрию P₁..P₄. Требуется добавить этап coarse_masking(src) → bitwise_and(mask_zone) перед hough_lines_p() согласно Коллизии Б из docs/проверить.md |
+| P2 | **Изоляция боковых артефактов ("боковушек") толстых книг при раскрытии на сканере** | Не реализовано вовсе; упоминание только в ТЗ §4.2 | Необходимо внедрить градиентный анализ плотности по периферии macro-contour: если обнаружен паттерн "частые чередующиеся светлые/тёмные линии" (слои предыдущих/последующих страниц), рамку детекции принудительно сдвинуть внутрь на шаг дефекта. Это предотвратит включение торцевых полосок страницы в контур книги |
 
 ## 10.3 НЕ РЕАЛИЗОВАНО ❌
 
@@ -359,27 +370,28 @@ UI строится вокруг потокового рендеринга пр�
 
 На основе аудита текущего состояния кодовой базы и полного соответствия ТЗ v1.0 предлагаю следующую последовательность работ для вывода системы в production-ready статус «Канонисса-Библиотека».
 
-## Этап A: Критические исправления Rust Core Engine 🔴 HIGH
+## Этап A: Критические исправления Rust Core Engine ✅ ЗАВЕРШЁН
 
-| Задача | Описание | Сложность | Зависимости |
-|--------|----------|-----------|-------------|
-| A1 | **Реальная геометрия вершин P₁..P₄ из HoughLinesP** вместо заглушек статического параллелограмма | Высокая (математика + алгоритмы кластеризации углов отрезков → экстраполяция прямых Lᵢ → вычисление точек пересечений Lⱼ∩Lₖ; обработка вырожденных случаев тени корешка) | segmentation.rs текущая версия Canny→Blur→Hough pipeline уже готова к расширению логики группировки векторов линий |
-| A2 | **Маскирование потолка/ламп до детекции Хафа (coarse_masking)** согласно Коллизии Б аудита docs/проверить.md | Средняя (Gaussian blur низкого разрешения → Otsu threshold бинаризация всей зоны сканирования → поиск контура max.area() книги → bitwise_and(src, mask_zone_of_book) перед передачей в hough_lines_p(edges_cleaned_from_ceiling_noise)) | segmentation.rs после реализации coarse_mask(src)→Mat будет принимать очищенный вход без ложных параллельных линий текстуры потолка за пределами раскрытой книги |
-| A3 | **Подключение реального захвата SANE в Web API handler process_scan_frame** вместо dummy-frame Mat(4700×3300) | Обернуть блокирующий вызов sane_core::capture_sane_frame(device_name) внутрь tokio::task::spawn_blocking(...) внутри асинхронного хендлера /api/v1/scanner/process ради избежания фризирования Tokio event-loop во время механического движения каретки EPSON GT-XXXXX планшета (~3–5 секунд физический цикл); результат captured_mat передать напрямую в CV pipeline process_book_contours(&captured_mat) и apply_sauvola_threshold(&captured_frame,k=0.2,w=15), вернуть JSON ScanResponse{vertices,status:"PreviewReady",execution_time_ms} Flutter клиенту через Json<T> сериализацию serde; добавить параметр device_address или auto-detect флаг в тело POST запроса {uuid,"device":null|"epson:/dev/bus/usb/..."} для явного выбора сканера при multi-device конфигурации Linux системы | main.rs текущий Router.new().route("/scanner/process"...)+sane_core.rs уже экспортирует detect_hardware_scanner()+capture_sane_frame(device_name)→Result<Mat,String>; нужно только связать их логикой spawn_blocking(async_handler_body) вместо создания фиктивного Scalar(240,240,240) растрового кадра для тестов без железа |
+| Задача | Статус | Примечание |
+|--------|--------|------------|
+| A1 | ✅ Реализовано | Реальная геометрия вершин P₁..P₄ из HoughLinesP: кластеризация углов отрезков → взвешенная медиана → экстраполяция прямых Lᵢ → вычисление точек пересечений Lⱼ∩Lₖ; fallback findContours/approxPolyDP/minAreaRect при пустых кластерах |
+| A2 | ❌ Не реализовано | Маскирование потолка/ламп до детекции Хафа (coarse_masking). Перенесено в Этап B как задача B3 |
+| A3 | ✅ Реализовано | Подключение реального захвата SANE в Web API handler process_scan_frame: блокирующий вызов sane_core::capture_sane_frame(device_name) обернут в tokio::task::spawn_blocking(); dummy-frame Mat удалён; JSON ScanResponse возвращает настоящие вершины PageVertices |
 
 ## Этап B: Новые модули Computer Vision 🟡 MEDIUM-HIGH
 
 | Задача | Описание | Сложность | Зависимости |
 |--------|----------|-----------|-------------|
-| B1 | **Деварпинг корешка книги De-warping** цилиндрической трансформацией текста у тугого переплёта | Высокая (детекция центральной тени корешка по градиенту яркости вдоль средней оси разворота → построение адаптивной Mesh Grid деформации поверхности через Text Line Tracking искривления базовых строк букв → применение remap(cx,cy→x',y') обратной координатной трансформации OpenCV warpPerspective/warpAffine комбинацией или spline-based morphing map_x,map_y lookup таблицами пикселей) | Требуется новый файл `src/cv/warping.rs` с экспортируемой функцией `pub fn dewarp_spine_deformation(src:&Mat)->Result<Mat,String>`; интеграция вызова в main.rs pipeline после process_book_contours(&rotated_frame)→vertices но до split left/right pages box crop операций для коррекции геометрии обеих страниц разворота одновременно до бинаризации Sauvola threshold этапа. segmentation.rs должен быть готов вернуть точные вершины P₁..P₄ (Этап A1) для определения центра разворота x_center=(p1.x+p2.x)/2 как начальной точки поиска тени корешка по вертикальному срезу яркости кадра |
-| B2 | **Изоляция боковых артефактов "боковушек" толстых книг** градиентным анализом плотности периферии macro-contour зоны книги | Средняя (после coarse_mask(src)→mask_zone_book вычислить edge_gradient_density(left_margin_strip)+edge_gradient_density(right_margin_strip); если обнаружен паттерн частых чередующихся светлых/тёмных линий слоёв предыдущих/последующих страниц → принудительно сдвинуть рамку детекции внутрь на шаг дефекта margin_shrink_px=detected_pattern_step_size×1.5 перед передачей cropped_zone_of_clean_pages_only в HoughLinesP сегментацию контуров границ бумаги) | Зависит от успешной реализации coarse_mask(src)→MaskZoneBook (Задача A2 Этапа A), так как требует локализованного анализа только внутри изолированной зоны раскрытой книги без шума потолка ламп за пределами макроконтурa сканирования планшета EPSON GT-XXXXX формата А3 при открытой крышке устройства захвата изображения |
+| B1 | **Деварпинг корешка книги De-warping** цилиндрической трансформацией текста у тугого переплёта | Высокая (детекция центральной тени корешка по градиенту яркости вдоль средней оси разворота → построение адаптивной Mesh Grid деформации поверхности через Text Line Tracking искривления базовых строк букв → применение remap(cx,cy→x',y') обратной координатной трансформации OpenCV warpPerspective/warpAffine комбинацией или spline-based morphing map_x,map_y lookup таблицами пикселей) | Требуется новый файл `src/cv/warping.rs` с экспортируемой функцией `pub fn dewarp_spine_deformation(src:&Mat)->Result<Mat,String>`; интеграция вызова в main.rs pipeline после process_book_contours(&rotated_frame)→vertices но до split left/right pages box crop операций для коррекции геометрии обеих страниц разворота одновременно до бинаризации Sauvola threshold этапа. segmentation.rs уже готов вернуть точные вершины P₁..P₄ для определения центра разворота x_center=(p1.x+p2.x)/2 как начальной точки поиска тени корешка по вертикальному срезу яркости кадра |
+| B2 | **Изоляция боковых артефактов "боковушек" толстых книг** градиентным анализом плотности периферии macro-contour зоны книги | Средняя (после coarse_mask(src)→mask_zone_book вычислить edge_gradient_density(left_margin_strip)+edge_gradient_density(right_margin_strip); если обнаружен паттерн частых чередующихся светлых/тёмных линий слоёв предыдущих/последующих страниц → принудительно сдвинуть рамку детекции внутрь на шаг дефекта margin_shrink_px=detected_pattern_step_size×1.5 перед передачей cropped_zone_of_clean_pages_only в HoughLinesP сегментацию контуров границ бумаги) | Зависит от успешной реализации coarse_mask(src)→MaskZoneBook (Задача B3), так как требует локализованного анализа только внутри изолированной зоны раскрытой книги без шума потолка ламп за пределами макроконтурa сканирования планшета EPSON GT-XXXXX формата А3 при открытой крышке устройства захвата изображения |
+| B3 | **Маскирование потолка/ламп до детекции Хафа (coarse_masking)** согласно Коллизии Б аудита docs/проверить.md | Средняя (Gaussian blur низкого разрешения → Otsu threshold бинаризация всей зоны сканирования → поиск контура max.area() книги → bitwise_and(src, mask_zone_of_book) перед передачей в hough_lines_p(edges_cleaned_from_ceiling_noise)) | Встраивается в segmentation.rs: новая функция coarse_mask(src)→Mat вызывается до Canny/HoughLinesP и возвращает очищенный вход без ложных параллельных линий текстуры потолка за пределами раскрытой книги |
 
 ## Этап C: Flutter Desktop клиент и интерактивный UI 🟡 MEDIUM-HIGH
 
 | Задача | Описание | Сложность | Зависимости |
 |--------|----------|-----------|-------------|
-| C1 | **Генерация проекта Flutter Linux desktop + базовая маршрутизация HTTP к Axum API localhost:54321** | Низкая (`flutter create kanonissa_flutter_client --platforms linux` → крейты http/bloc/flutter_bloc/provider; настройка CORS Tower middleware; структура lib/{presentation/domain/data} Clean Architecture) | Не зависит напрямую от CV модулей; может идти параллельно с Этапами A/B при стабильном JSON контракте эндпоинтов /api/v1/scanner/init и /process |
-| C2 | **ScannerBLoC реактивная модель состояний Initial→Ready→InProgress→ProcessingInCore→PreviewReady→SavingPage** | Средняя (sealed class ScannerEvent{StartScan(), CancelScan(), AdjustVertex(int index, Offset newCoord)}; enum ScannerState{Initial, Ready, InProgress, ProcessingInCore(loadingMs), PreviewReady(vertices:[8]Point), SavingPage(progressPercent), Error(message)}; потоковая обработка через BlocProvider<ScannerBloc>(); POST запрос к process_scan_frame с device_uuid+k_factor Sauvola параметром) | Требует завершения задачи A3 (реальный SANE захват вместо dummy-frame Mat) чтобы получать настоящие вершины P₁..P₈ из JSON ответа {vertices:{left_page:[p1,p2,p3,p4],right_page:[p5,p6,p7,p8]},status:"PreviewReady",execution_time_ms:N} |
+| C1 | **Генерация проекта Flutter Linux desktop + базовая маршрутизация HTTP к Axum API localhost:54321** | Низкая (`flutter create kanonissa_flutter_client --platforms linux` → крейты http/bloc/flutter_bloc/provider; настройка CORS Tower middleware; структура lib/{presentation/domain/data} Clean Architecture) | Не зависит напрямую от CV модулей; может идти параллельно с Этапом B при стабильном JSON контракте эндпоинтов /api/v1/scanner/init и /process |
+| C2 | **ScannerBLoC реактивная модель состояний Initial→Ready→InProgress→ProcessingInCore→PreviewReady→SavingPage** | Средняя (sealed class ScannerEvent{StartScan(), CancelScan(), AdjustVertex(int index, Offset newCoord)}; enum ScannerState{Initial, Ready, InProgress, ProcessingInCore(loadingMs), PreviewReady(vertices:[8]Point), SavingPage(progressPercent), Error(message)}; потоковая обработка через BlocProvider<ScannerBloc>(); POST запрос к process_scan_frame с device_uuid+k_factor Sauvola параметром) | Требует реального SANE захвата (Этап A3 ✅ готов) чтобы получать настоящие вершины P₁..P₈ из JSON ответа {vertices:{left_page:[p1,p2,p3,p4],right_page:[p5,p6,p7,p8]},status:"PreviewReady",execution_time_ms:N} |
 | C3 | **CustomPainter интерактивной сетки Drag-and-Drop вершин поверх превью разворота со сканера** | Средняя UX реализация (ScanEditorPainter extends CustomPainter принимает List<Offset> vertices длиной 8 точек [4 left+4 right]; рисует два замкнутых Path четырехугольника разными цветами (левый=синий/правый=зелёный); каждая вершина — Draggable Point радиусом 6px с неоновым кольцом opacity=0.3 radius=12px; GestureDetector.onPanUpdate(event) вычисляет delta.dx+delta.dy смещения точки offset_old→offset_new и отправляет PATCH запрос к Axum endpoint `/api/v1/scan/<uuid>/adjust-vertex?index=N&x=X&y=Y` для мгновенного пересчёта remap трансформации в Rust ядре без перезапуска полного конвейера обработки изображения) | Reference реализация scan_editor_painter.dart уже готова в docs/проверить.md Патч 3 как template кода Dart для интеграции во Flutter проект |
 
 ## Этап D: Session Store + Hot Restart Recovery 🔴 HIGH
