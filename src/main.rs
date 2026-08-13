@@ -254,11 +254,54 @@ async fn process_scan_frame(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // Сегментация разворота на левую и правую страницы
-    let (_left_page, _right_page) = cv::segment_pages(&corrected_page)
+    let (left_page, right_page) = cv::segment_pages(&corrected_page)
         .unwrap_or_else(|e| {
             println!("[⚠️ SEGMENT] Ошибка сегментации: {}. Использую исходный кадр.", e);
             (corrected_page.clone(), corrected_page.clone())
         });
+
+    // Бинаризация каждой страницы отдельно
+    let binary_left = cv::apply_sauvola_threshold(&left_page, 0.2, 15)
+        .unwrap_or_else(|e| {
+            println!("[⚠️ BIN LEFT] Ошибка бинаризации левой страницы: {}", e);
+            left_page.clone()
+        });
+    let binary_right = cv::apply_sauvola_threshold(&right_page, 0.2, 15)
+        .unwrap_or_else(|e| {
+            println!("[⚠️ BIN RIGHT] Ошибка бинаризации правой страницы: {}", e);
+            right_page.clone()
+        });
+
+    // Инвертация: бумага белая, текст черный
+    let mut final_left = Mat::default();
+    let mut final_right = Mat::default();
+    opencv::core::bitwise_not(&binary_left, &mut final_left, &Mat::default())
+        .unwrap_or_else(|e| {
+            println!("[⚠️ INV LEFT] Ошибка инверсии левой страницы: {}", e);
+            left_page.clone().clone_into(&mut final_left);
+        });
+    opencv::core::bitwise_not(&binary_right, &mut final_right, &Mat::default())
+        .unwrap_or_else(|e| {
+            println!("[⚠️ INV RIGHT] Ошибка инверсии правой страницы: {}", e);
+            right_page.clone().clone_into(&mut final_right);
+        });
+
+    // Сохранение страниц
+    let output_dir = "./split";
+    if !std::path::Path::new(output_dir).exists() {
+        std::fs::create_dir_all(output_dir).ok();
+    }
+    let left_path = format!("{}/page_{}_left.png", payload.uuid, start_time.elapsed().as_millis());
+    let right_path = format!("{}/page_{}_right.png", payload.uuid, start_time.elapsed().as_millis());
+
+    if !imgcodecs::imwrite(&left_path, &final_left, &opencv::core::Vector::new()).unwrap_or(false) {
+        println!("[⚠️ SAVE LEFT] Ошибка сохранения левой страницы");
+    }
+    if !imgcodecs::imwrite(&right_path, &final_right, &opencv::core::Vector::new()).unwrap_or(false) {
+        println!("[⚠️ SAVE RIGHT] Ошибка сохранения правой страницы");
+    }
+
+    println!("[✅ WEB SUCCESS] Разворот обработан и сохранен: {} и {}", left_path, right_path);
 
     Ok(Json(ScanResponse {
         status: "PreviewReady".to_string(),
