@@ -78,11 +78,12 @@
 
 ## Этап E: PDF Exporter + Multi-profile (MEDIUM)
 
-### E1. Экспорт в CCITT Group 4 TIFF
-- [ ] Подключить крейт `tiff`
-- [ ] Реализовать функцию encode_ccitt_g4(src)
-- [ ] Заменить imgcodecs::imwrite("png") на CCITT G4 энкодер
-- **Цель:** ~80–120 KB/страницу, книга 400 стр ≤40 MB
+### E1. Экспорт в CCITT Group 4 TIFF ✅ ЗАВЕРШЕНО
+- [x] Подключить крейт `tiff`
+- [x] Реализовать функцию encode_ccitt_g4_to_file() через OpenCV imgcodecs::imwrite
+- [x] Заменить imgcodecs::imwrite("png") на CCITT G4 энкодер в CLI и Web API режимах
+- **Файл:** `src/cv/ccitt_encoder.rs`
+- **Статус:** Реализовано, интегрировано, cargo check OK
 
 ### E2. Multi-profile фильтрация
 - [ ] Создать модуль profile_filtering.rs

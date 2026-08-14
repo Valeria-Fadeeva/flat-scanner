@@ -163,14 +163,20 @@ fn run_cli_pipeline(args: CliArgs) -> Result<(), String> {
     opencv::core::bitwise_not(&binary_right, &mut final_right, &Mat::default())
         .map_err(|e| e.to_string())?;
 
-    let left_path = format!("{}/page_left_clean.png", args.output_dir);
-    let right_path = format!("{}/page_right_clean.png", args.output_dir);
+    let left_path = format!("{}/page_left_clean.tiff", args.output_dir);
+    let right_path = format!("{}/page_right_clean.tiff", args.output_dir);
 
-    // Сохраняем идеально ориентированные и инвертированные страницы
-    imgcodecs::imwrite(&left_path, &final_left, &opencv::core::Vector::new())
-        .map_err(|e| e.to_string())?;
-    imgcodecs::imwrite(&right_path, &final_right, &opencv::core::Vector::new())
-        .map_err(|e| e.to_string())?;
+    // Сохраняем в CCITT Group 4 TIFF
+    let left_size = cv::encode_ccitt_g4_to_file(&final_left, &left_path)
+        .map_err(|e| format!("Ошибка кодирования левой страницы: {}", e))?;
+    let right_size = cv::encode_ccitt_g4_to_file(&final_right, &right_path)
+        .map_err(|e| format!("Ошибка кодирования правой страницы: {}", e))?;
+
+    println!(
+        "[💾 CCITT G4]: Левая страница: {} KB, Правая страница: {} KB",
+        left_size / 1024,
+        right_size / 1024
+    );
 
     println!(
         "[🚀 CLI SUCCESS]: Разворот успешно ориентирован, бинаризирован и разделен за {} мс!",
@@ -296,19 +302,21 @@ async fn process_scan_frame(
             right_aligned.clone().clone_into(&mut final_right);
         });
 
-    // Сохранение страниц
+    // Сохранение страниц в CCITT Group 4 TIFF
     let output_dir = "./split";
     if !std::path::Path::new(output_dir).exists() {
         std::fs::create_dir_all(output_dir).ok();
     }
-    let left_path = format!("{}/page_{}_left.png", payload.uuid, start_time.elapsed().as_millis());
-    let right_path = format!("{}/page_{}_right.png", payload.uuid, start_time.elapsed().as_millis());
+    let left_path = format!("{}/page_{}_left.tiff", payload.uuid, start_time.elapsed().as_millis());
+    let right_path = format!("{}/page_{}_right.tiff", payload.uuid, start_time.elapsed().as_millis());
 
-    if !imgcodecs::imwrite(&left_path, &final_left, &opencv::core::Vector::new()).unwrap_or(false) {
-        println!("[⚠️ SAVE LEFT] Ошибка сохранения левой страницы");
+    match cv::encode_ccitt_g4_to_file(&final_left, &left_path) {
+        Ok(size) => println!("[💾 CCITT G4 LEFT] {} KB", size / 1024),
+        Err(e) => println!("[⚠️ SAVE LEFT] Ошибка кодирования левой страницы: {}", e),
     }
-    if !imgcodecs::imwrite(&right_path, &final_right, &opencv::core::Vector::new()).unwrap_or(false) {
-        println!("[⚠️ SAVE RIGHT] Ошибка сохранения правой страницы");
+    match cv::encode_ccitt_g4_to_file(&final_right, &right_path) {
+        Ok(size) => println!("[💾 CCITT G4 RIGHT] {} KB", size / 1024),
+        Err(e) => println!("[⚠️ SAVE RIGHT] Ошибка кодирования правой страницы: {}", e),
     }
 
     println!("[✅ WEB SUCCESS] Разворот обработан и сохранен: {} и {}", left_path, right_path);
