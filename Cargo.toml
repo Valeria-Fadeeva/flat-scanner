@@ -30,6 +30,9 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 # Генерация UUID для сессий и книг
 uuid = { version = "1.24", features = ["v4", "serde"] }
 
+# Установка mtime для pending-файлов (hot-restart)
+filetime = "0.2"
+
 [profile.release]
 opt-level = 3           # Максимальная оптимизация кода ядра
 lto = true              # Сквозная линковка при компиляции для вырезания мертвого кода

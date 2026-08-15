@@ -748,6 +748,19 @@ impl SessionStore {
         Ok(())
     }
 
+    /// Выполняет произвольную PRAGMA команду
+    ///
+    /// # Аргументы
+    /// * `pragma` — строка PRAGMA (например, "wal_checkpoint(TRUNCATE)")
+    ///
+    /// # Возвращает
+    /// `Result<(), String>` — успех или описание ошибки
+    pub fn execute_pragma(&self, pragma: &str) -> Result<(), String> {
+        self.conn
+            .execute_batch(pragma)
+            .map_err(|e| format!("Ошибка выполнения PRAGMA '{}': {}", pragma, e))
+    }
+
     /// Возвращает путь к файлу БД
     pub fn db_path(&self) -> &str {
         &self.db_path

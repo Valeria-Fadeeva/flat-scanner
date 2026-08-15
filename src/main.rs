@@ -16,6 +16,7 @@ use tower_http::cors::{Any, CorsLayer};
 
 mod cv;
 mod sane_core; // Подключаем наш новый аппаратный слой FFI
+mod session_recovery; // Горячий рестарт сессии
 mod session_store; // Транзакционное хранение сессий сканирования
 
 /// ТЗ ПК "Канонисса-Библиотека" v1.0 — Двухрежимное ядро (Web / CLI)
@@ -69,10 +70,37 @@ async fn main() -> Result<(), String> {
     let session_store = session_store::global_session_store(db_path);
     println!("[💾 SESSION STORE]: Инициализирован SQLite на {}", db_path);
 
-    // Проверка на незавершённую сессию (hot-restart)
+    // D2: Горячий рестарт сессии
+    let recovery = session_recovery::SessionRecovery::new(None);
     if let Ok(store) = session_store.lock() {
-        if let Ok(Some(uuid)) = store.get_in_progress_book() {
-            println!("[🔄 HOT RESTART]: Обнаружена незавершённая сессия: {}", uuid);
+        match recovery.recover_session(&store) {
+            Ok(Some(result)) => {
+                println!(
+                    "[🔄 HOT RESTART]: Восстановлена сессия '{}' ({} страниц, {} завершено, {} pending)",
+                    result.book_name,
+                    result.total_pages,
+                    result.completed_spreads,
+                    result.pending_spreads
+                );
+            }
+            Ok(None) => {
+                println!("[🔄 HOT RESTART]: Незавершённых сессий не найдено");
+            }
+            Err(e) => {
+                println!("[⚠️ HOT RESTART]: Ошибка восстановления: {}", e);
+            }
+        }
+
+        // D2: WAL checkpoint при старте
+        if let Err(e) = recovery.wal_checkpoint(&store) {
+            println!("[⚠️ WAL]: Ошибка checkpoint: {}", e);
+        }
+
+        // D2: Очистка устаревших pending-файлов (старше 24 часов)
+        if let Ok(removed) = recovery.cleanup_stale_pending(std::time::Duration::from_secs(86400)) {
+            if !removed.is_empty() {
+                println!("[🧹 CLEANUP]: Удалено устаревших pending: {}", removed.len());
+            }
         }
     }
 
