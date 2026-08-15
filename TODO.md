@@ -153,4 +153,4 @@
 - [x] Интеграция в main.rs: параметры читаются при каждой обработке кадра
 - **Файл:** `src/cv/calibration.rs`
 - **Статус:** Реализовано, интегрировано, cargo check + cargo test OK
-- **Замечание:** REST endpoint `/api/v1/calibration` — отдельная задача (см. TECH_SPEC.md §12, Этап G1)
+- **Замечание:** REST endpoint `/api/v1/calibration` — ✅ ЗАВЕРШЕНО 16.08.2026. `CalibrationManager` (global OnceLock, mtime cache 500ms), `process_scan_frame` читает `calib.get()` перед каждой обработкой, Flutter `api_service.dart` — `getCalibration()`/`updateCalibration()`, `CalibrationParams` model, порт по умолчанию 8080. 4 теста калибровки зелёные, `flutter analyze` чисто. Документация: `flat-scanner-server/docs/tools/calibration_api.md`.

@@ -138,6 +138,8 @@ async fn main() -> Result<(), String> {
         .route("/api/v1/health", get(health_check))
         .route("/api/v1/scanner/init", post(initialize_sane))
         .route("/api/v1/scanner/process", post(process_scan_frame))
+        .route("/api/v1/calibration", get(get_calibration))
+        .route("/api/v1/calibration", post(update_calibration))
         .layer(cors);
 
     let addr: SocketAddr = cfg.bind_addr().parse().unwrap();
@@ -148,6 +150,44 @@ async fn main() -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+// --- БЛОК ОБРАБОТЧИКОВ КАЛИБРОВКИ (G1) ---
+
+/// GET /api/v1/calibration — возвращает текущие параметры калибровки.
+async fn get_calibration() -> Json<cv::calibration::CalibrationParams> {
+    Json(cv::calibration::global_calibration().get())
+}
+
+/// POST /api/v1/calibration — обновляет параметры калибровки (hot-reload).
+async fn update_calibration(
+    Json(params): Json<cv::calibration::CalibrationParams>,
+) -> Result<Json<cv::calibration::CalibrationParams>, (StatusCode, Json<serde_json::Value>)> {
+    // Валидация: k_factor в (0, 1), window_size нечётное >= 3
+    if !(0.0 < params.k_factor && params.k_factor < 1.0) {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({"error": "k_factor must be in (0, 1)"})),
+        ));
+    }
+    if params.window_size < 3 || params.window_size % 2 == 0 {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({"error": "window_size must be odd and >= 3"})),
+        ));
+    }
+
+    match cv::calibration::global_calibration().save(&params) {
+        Ok(()) => {
+            println!("[🎯 CALIBRATION]: Обновлены параметры k_factor={}, window_size={}, profile={}",
+                params.k_factor, params.window_size, params.profile);
+            Ok(Json(cv::calibration::global_calibration().get()))
+        }
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e})),
+        )),
+    }
 }
 
 // --- БЛОК ЛОКАЛЬНОГО CLI ПАЙПЛАЙНА ---
