@@ -1,0 +1,20 @@
+# Конфигурация Flat Scanner Server (Kanonissa Core Engine)
+#
+# Приоритет источников:
+#   1. CLI-флаги (--host, --port) — высший приоритет
+#   2. Этот файл (config.toml)
+#   3. Дефолтные значения (127.0.0.1:54321)
+#
+# Путь к файлу:
+#   - $FLAT_SCANNER_CONFIG (переменная окружения, для systemd)
+#   - ~/.config/flat-scanner-server/config.toml
+#   - /etc/flat-scanner-server/config.toml (системный, устанавливается PKGBUILD)
+
+[server]
+# Адрес привязки:
+#   "127.0.0.1" — только локальная машина (безопасно по умолчанию)
+#   "0.0.0.0"   — доступ по сети (для удалённого Flutter-клиента)
+host = "127.0.0.1"
+
+# Порт HTTP-шлюза
+port = 54321

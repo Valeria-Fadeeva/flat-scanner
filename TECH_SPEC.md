@@ -1,7 +1,7 @@
 # Канонисса-Библиотека — Единая техническая спецификация
 
-**Версия:** 2.0  
-**Дата актуализации:** 15 августа 2026 г.  
+**Версия:** 2.1  
+**Дата актуализации:** 16 августа 2026 г.  
 **Автор:** Valeria Fadeeva <valeria.fadeeva.me@gmail.com>  
 **Платформа:** AMD Ryzen 7 5700X / Radeon 9070 XT 16GB / 128 GB DDR4 / Arch Linux  
 **Стек:** Flutter Desktop (Dart) ↔ Rust Core Engine (Axum REST API) + OpenCV 4.x / SANE / libtiff
@@ -16,11 +16,12 @@
 4. [Computer Vision конвейер](#4-computer-vision-конвейер)
 5. [Обработка изображений и бинаризация](#5-обработка-изображений-и-бинаризация)
 6. [CCITT Group 4 и экспорт](#6-ccitt-group-4-и-экспорт)
-7. [Flutter UI (планируется)](#7-flutter-ui-планируется)
-8. [Отказоустойчивость и сессии (планируется)](#8-отказоустойчивость-и-сессии-планируется)
-9. [Инженерные директивы](#9-инженерные-директивы)
-10. [Текущее состояние кодовой базы](#10-текущее-состояние-кодовой-базы)
-11. [Roadmap](#11-roadmap)
+7. [Flutter UI](#7-flutter-ui)
+8. [Отказоустойчивость и сессии](#8-отказоустойчивость-и-сессии)
+9. [Упаковка и дистрибуция](#9-упаковка-и-дистрибуция)
+10. [Инженерные директивы](#10-инженерные-директивы)
+11. [Текущее состояние кодовой базы](#11-текущее-состояние-кодовой-базы)
+12. [Roadmap](#12-roadmap)
 
 ---
 
@@ -59,7 +60,7 @@
 │ • Drag-and-Drop вершин вручную          │
 │ • Нелинейная навигация по книге         │
 └──────────────┬──────────────────────────┘
-               │ HTTP REST API (localhost:54321)
+               │ HTTP REST API (localhost:8080)
                ▼
 ┌─────────────────────────────────────────┐
 │ Rust Core Engine                        │
@@ -87,15 +88,15 @@
 │ ├─ encode_ccitt_g4_to_file: экспорт     │
 │ └─ calibration: hot-reload параметров   │
 │                                         │
-│ Session Store (SQLite) [TODO]           │
-│ ├─ транзакционные UUID-сессии           │
-│ └─ горячий рестарт после сбоя           │
+│ Session Store (SQLite)                  │
+│ ├─ session_store.rs: UUID-сессии, WAL   │
+│ └─ session_recovery.rs: hot restart     │
 └─────────────────────────────────────────┘
 ```
 
 ### Режимы работы Rust-ядра
 
-1. **Web Mode** (дефолт): Axum-сервер на `127.0.0.1:54321` для взаимодействия с Flutter через JSON-API.
+1. **Web Mode** (дефолт): Axum-сервер на `127.0.0.1:8080` (настраивается через `--host`/`--port` или `config.toml`) для взаимодействия с Flutter через JSON-API.
 2. **CLI Mode** (`--cli` флаг): автономный конвейер без сервера — чтение файла или прямой захват со сканера → обработка → сохранение TIFF/PNG в папку `./split`.
 
 ### Коллизия А: Фриз UI при маршалинге RAW-буфера
@@ -286,27 +287,38 @@ T(x, y) = m(x, y) · [1 + k · (s(x, y) / R − 1)]
 
 ---
 
-## 7. FLUTTER UI (ПЛАНИРУЕТСЯ)
+## 7. FLUTTER UI (РЕАЛИЗОВАНО)
+
+**Каталог:** `flat-scanner-client-flutter/`
 
 ### 7.1 Архитектура ScannerBLoC
+
+**Файл:** `lib/domain/scanner_bloc.dart`
 
 | Состояние | Описание |
 |-----------|----------|
 | `ScannerInitial` | Ожидание подключения сканера |
-| `ScannerReady` | Система готова, каретка в исходной точке |
-| `ScanInProgress` | Системный вызов SANE API, блокировка ввода |
-| `ProcessingInCore` | Передача буфера в Rust, CV-обработка |
-| `PreviewReady` | Готовое превью с сеткой, разблокировка корректировок |
-| `SavingPage` | Упаковка в CCITT G4 + запись на диск |
+| `ScannerScanning` | Системный вызов SANE API, блокировка ввода |
+| `ScannerSuccess` | Готовое превью с вершинами и временем обработки |
+| `ScannerError` | Ошибка с сообщением |
 
-### 7.2 CustomPainter интерактивной сетки
+События: `StartScan`, `ResetScan`.
 
-- `ScanEditorPainter` принимает массив из 8 Offset (4 левая + 4 правая страница).
-- Два замкнутых Path (левый=синий, правый=зелёный).
-- Каждая вершина — Draggable Point (радиус 6px) с неоновым кольцом (opacity=0.3, radius=12px).
+### 7.2 UI редактора сканирования
+
+**Файл:** `lib/presentation/scan_editor_page.dart`
+
+- Выбор профиля (TextBw1bit / IllustrationGrayscale8bit / ColorRgb24bit)
+- Кнопка сканирования, отображение вершин и времени обработки
+- Опциональный полноэкранный режим (window_manager)
+- ThemeService: адаптация под KDE/Breeze + Material 3 (`lib/data/theme_service.dart`)
+
+### 7.3 CustomPainter интерактивной сетки (отложено)
+
+- `ScanEditorPainter` с Drag-and-Drop вершин — на следующий этап.
 - `GestureDetector.onPanUpdate` → PATCH `/api/v1/scan/<uuid>/adjust-vertex?index=N&x=X&y=Y`.
 
-### 7.3 JSON контракты API
+### 7.4 JSON контракты API
 
 **Запрос** `POST /api/v1/scanner/process`:
 ```json
@@ -334,9 +346,11 @@ T(x, y) = m(x, y) · [1 + k · (s(x, y) / R − 1)]
 
 ---
 
-## 8. ОТКАЗОУСТОЙЧИВОСТЬ И СЕССИИ (ПЛАНИРУЕТСЯ)
+## 8. ОТКАЗОУСТОЙЧИВОСТЬ И СЕССИИ (РЕАЛИЗОВАНО)
 
 ### 8.1 SQLite транзакционная модель
+
+**Файл:** `src/session_store.rs`
 
 - Таблица `books`: uuid, name, start_date, total_pages, status.
 - Таблица `spreads`: book_uuid, spread_index, left_path, right_path, left_vertices[4], right_vertices[4], threshold_k, status.
@@ -345,6 +359,8 @@ T(x, y) = m(x, y) · [1 + k · (s(x, y) / R − 1)]
 
 ### 8.2 Горячий рестарт сессии
 
+**Файл:** `src/session_recovery.rs`
+
 При перезапуске:
 1. Чтение последнего незавершённого UUID (`SELECT * FROM books WHERE status='in_progress' ORDER BY updated_at DESC LIMIT 1`).
 2. Восстановление очереди спредов.
@@ -352,11 +368,43 @@ T(x, y) = m(x, y) · [1 + k · (s(x, y) / R − 1)]
 
 ### 8.3 Коллизия В: Race Condition
 
-При пропадании питания во время записи координат — повреждение индекса. Решение: двойное журналирование (`/tmp/<uuid>.pending` → подтверждение → WAL checkpoint).
+При пропадании питания во время записи координат — повреждение индекса. Решение: двойное журналирование (`/tmp/<uuid>.pending` → подтверждение → WAL checkpoint). Очистка устаревших pending-файлов (старше 24 часов).
 
 ---
 
-## 9. ИНЖЕНЕРНЫЕ ДИРЕКТИВЫ
+## 9. УПАКОВКА И ДИСТРИБУЦИЯ
+
+### Сервер
+
+| Файл | Назначение |
+|------|------------|
+| `flat-scanner-server/PKGBUILD` | Arch Linux пакет `flat-scanner-server` |
+| `flat-scanner-server/flat-scanner-server.service` | systemd unit (After=network.target, Restart=on-failure) |
+| `flat-scanner-server/config.example.toml` | Шаблон конфигурации (host, port, device) |
+| `flat-scanner-server/README.md` | Инструкция по установке и запуску |
+
+### Клиент
+
+| Файл | Назначение |
+|------|------------|
+| `flat-scanner-client-flutter/PKGBUILD` | Arch Linux пакет `flat-scanner-client` |
+| `flat-scanner-client-flutter/flat-scanner-client.desktop` | .desktop entry для меню приложений |
+| `flat-scanner-client-flutter/README.md` | Инструкция по установке и запуску |
+
+### Установка (Arch Linux)
+
+```bash
+# Сервер
+makepkg -si flat-scanner-server/PKGBUILD
+systemctl enable --now flat-scanner-server
+
+# Клиент
+makepkg -si flat-scanner-client-flutter/PKGBUILD
+```
+
+---
+
+## 10. ИНЖЕНЕРНЫЕ ДИРЕКТИВЫ
 
 ### Правила генерации кода
 
@@ -379,7 +427,7 @@ panic = "abort"
 
 ---
 
-## 10. ТЕКУЩЕЕ СОСТОЯНИЕ КОДОВОЙ БАЗЫ
+## 11. ТЕКУЩЕЕ СОСТОЯНИЕ КОДОВОЙ БАЗЫ
 
 ### Структура файлов
 
@@ -396,6 +444,14 @@ panic = "abort"
 | `src/cv/ccitt_encoder.rs` | FFI libtiff: CCITT G4 TIFF экспорт | ✅ |
 | `src/cv/profile_filtering.rs` | Multi-profile: TextBw1bit / IllustrationGrayscale8bit / ColorRgb24bit | ✅ |
 | `src/cv/calibration.rs` | Hot-reload k_factor/window_size/profile из calibration.json | ✅ |
+| `src/session_store.rs` | SQLite (rusqlite): books + spreads, WAL, транзакции | ✅ |
+| `src/session_recovery.rs` | Hot restart: восстановление UUID + очередь + pending-журналирование | ✅ |
+| `src/config.rs` | Загрузка config.toml + CLI-флаги (--host/--port) | ✅ |
+| `flat-scanner-client-flutter/lib/` | Flutter клиент: BLoC, ApiService, ThemeService, ScanEditorPage | ✅ |
+| `flat-scanner-server/PKGBUILD` | Arch Linux пакет сервера | ✅ |
+| `flat-scanner-server/flat-scanner-server.service` | systemd unit | ✅ |
+| `flat-scanner-client-flutter/PKGBUILD` | Arch Linux пакет клиента | ✅ |
+| `flat-scanner-client-flutter/flat-scanner-client.desktop` | .desktop entry | ✅ |
 
 ### Реализовано ✅
 
@@ -418,13 +474,16 @@ panic = "abort"
 | R15 | Hot-reload калибровки (mtime tracking, 500ms throttle) | `cv/calibration.rs` |
 | R16 | Result<T, String> обработка ошибок (без unwrap/panic) | весь код |
 | R17 | Release профиль LTO + opt3 + codegen-units=1 + panic=abort | `Cargo.toml` |
+| R18 | SQLite Session Store (books + spreads, WAL, транзакции) | `session_store.rs` |
+| R19 | Hot restart сессии (pending-журналирование, WAL checkpoint) | `session_recovery.rs` |
+| R20 | CLI-флаги --host/--port + config.toml | `config.rs` |
+| R21 | Flutter клиент (BLoC + ApiService + ThemeService + ScanEditorPage) | `flat-scanner-client-flutter/` |
+| R22 | PKGBUILD + systemd + .desktop (сервер + клиент) | `PKGBUILD`, `.service`, `.desktop` |
 
 ### Не реализовано ❌
 
 | # | Функциональность | Приоритет |
 |---|-----------------|-----------|
-| M1 | Flutter Desktop клиент (BLoC + CustomPainter) | HIGH |
-| M2 | SQLite Session Store + Hot Restart | HIGH |
 | M3 | REST endpoint `/api/v1/calibration` (GET/POST) | MEDIUM |
 | M4 | REST endpoint `/api/v1/scan/<uuid>/adjust-vertex` (PATCH) | MEDIUM |
 | M5 | Сохранение печатей/штампов (YCbCr Cr-канал) | MEDIUM |
@@ -434,7 +493,7 @@ panic = "abort"
 
 ### Тесты
 
-14 unit-тестов, все проходят (`cargo test`):
+34 unit-теста, все проходят (`cargo test`):
 - `calibration`: default_params, profile_parsing, save_and_reload, json_deserialization
 - `ccitt_encoder`: encode_ccitt_g4, encode_ccitt_g4_all_white
 - `profile_filtering`: profile_from_str, profile_text_bw, profile_grayscale, profile_color
@@ -442,7 +501,7 @@ panic = "abort"
 
 ---
 
-## 11. ROADMAP
+## 12. ROADMAP
 
 ### Этап A: Критические исправления Rust Core ✅ ЗАВЕРШЁН
 
@@ -460,20 +519,21 @@ panic = "abort"
 | B2: Изоляция боковых артефактов | ✅ |
 | B3: Улучшение coarse masking (мультимасштаб + closing) | ✅ |
 
-### Этап C: Flutter Desktop клиент 🔴 HIGH
+### Этап C: Flutter Desktop клиент ✅ ЗАВЕРШЁН
 
-| Задача | Описание |
-|--------|----------|
-| C1 | Генерация проекта Flutter Linux + HTTP к Axum localhost:54321 |
-| C2 | ScannerBLoC (Initial→Ready→InProgress→ProcessingInCore→PreviewReady→SavingPage) |
-| C3 | CustomPainter Drag-and-Drop вершин + PATCH adjust-vertex |
+| Задача | Статус |
+|--------|--------|
+| C1: Генерация проекта Flutter Linux + HTTP к Axum | ✅ |
+| C2: ScannerBLoC (Initial→Scanning→Success/Error) | ✅ |
+| C3: ScanEditorPage + ThemeService + fullscreen | ✅ |
+| C4: CustomPainter Drag-and-Drop вершин | ⏳ отложено |
 
-### Этап D: Session Store + Hot Restart 🔴 HIGH
+### Этап D: Session Store + Hot Restart ✅ ЗАВЕРШЁН
 
-| Задача | Описание |
-|--------|----------|
-| D1 | SQLite (rusqlite): books + spreads, WAL, транзакции |
-| D2 | Hot restart: восстановление UUID + очередь + двойное журналирование |
+| Задача | Статус |
+|--------|--------|
+| D1: SQLite (rusqlite): books + spreads, WAL, транзакции | ✅ |
+| D2: Hot restart: восстановление UUID + очередь + pending-журналирование | ✅ |
 
 ### Этап E: PDF Export + Multi-profile ✅ ЗАВЕРШЁН
 
@@ -482,15 +542,23 @@ panic = "abort"
 | E1: CCITT G4 TIFF экспорт | ✅ |
 | E2: Multi-profile фильтрация (3 профиля) | ✅ |
 
-### Этап F: Дополнительные модули 🟡 MEDIUM
+### Этап F: Упаковка и дистрибуция ✅ ЗАВЕРШЁН
+
+| Задача | Статус |
+|--------|--------|
+| F1: PKGBUILD сервера + systemd unit + config.toml | ✅ |
+| F2: PKGBUILD клиента + .desktop entry | ✅ |
+
+### Этап G: Дополнительные модули 🟡 MEDIUM
 
 | Задача | Описание |
 |--------|----------|
-| F1 | REST endpoint `/api/v1/calibration` (GET/POST) |
-| F2 | REST endpoint `/api/v1/scan/<uuid>/adjust-vertex` (PATCH) |
-| F3 | Сохранение печатей/штампов (YCbCr) |
-| F4 | Модуль разборки сторонних PDF |
-| F5 | Сборка финального PDF из CCITT G4 страниц |
+| G1 | REST endpoint `/api/v1/calibration` (GET/POST) |
+| G2 | REST endpoint `/api/v1/scan/<uuid>/adjust-vertex` (PATCH) |
+| G3 | Сохранение печатей/штампов (YCbCr) |
+| G4 | Модуль разборки сторонних PDF |
+| G5 | Сборка финального PDF из CCITT G4 страниц |
+| G6 | CustomPainter Drag-and-Drop вершин (C4) |
 
 ---
 
@@ -506,6 +574,9 @@ panic = "abort"
 | `opencv` | 0.100 | Computer Vision (OpenCV 4.x) |
 | `tiff` | 0.11 | (запасной, основной путь — FFI libtiff) |
 | `pkg-config` | 0.3.34 | build-dep: линковка SANE |
+| `rusqlite` | 0.31 | SQLite Session Store (WAL) |
+| `toml` | 0.8 | Парсинг config.toml |
+| `uuid` | 1.x | UUID генерация сессий |
 
 ### Системные зависимости (Arch Linux)
 

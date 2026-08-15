@@ -1,0 +1,44 @@
+# PKGBUILD для Flat Scanner Server (Kanonissa Core Engine)
+# Сборка: makepkg -si
+# Установка: pacman -U flat-scanner-server-*.pkg.tar.zst
+
+pkgname=flat-scanner-server
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Flat Scanner Core Engine (Kanonissa) — движок оцифровки книг без OCR"
+arch=('x86_64')
+url="https://github.com/valeria-fadeeva/scan"
+license=('MIT')
+depends=('opencv' 'sane' 'libtiff' 'sqlite' 'glibc')
+makedepends=('cargo' 'pkg-config')
+install=
+source=("$pkgname-$pkgver.tar.gz::https://github.com/valeria-fadeeva/scan/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+    cd "$pkgname-$pkgver/flat-scanner-server"
+    cargo build --release --locked
+}
+
+package() {
+    cd "$pkgname-$pkgver/flat-scanner-server"
+
+    # Бинарник
+    install -Dm755 target/release/flat_scanner_server \
+        "$pkgdir/usr/bin/flat_scanner_server"
+
+    # systemd service
+    install -Dm644 flat-scanner-server.service \
+        "$pkgdir/usr/lib/systemd/system/flat-scanner-server.service"
+
+    # Каталог конфигурации
+    install -Dm644 -d "$pkgdir/etc/flat-scanner-server"
+    install -Dm644 config.example.toml \
+        "$pkgdir/etc/flat-scanner-server/config.toml"
+
+    # Каталог работы (kanonissa.db, calibration.json, split/)
+    install -Dm755 -d "$pkgdir/var/lib/flat-scanner"
+
+    # Документация
+    install -Dm644 README.md "$pkgdir/usr/share/doc/flat-scanner-server/README.md"
+}

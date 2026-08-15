@@ -14,6 +14,7 @@ use std::net::SocketAddr;
 use std::path::Path;
 use tower_http::cors::{Any, CorsLayer};
 
+mod config; // Конфигурация bind-адреса (host/port)
 mod cv;
 mod sane_core; // Подключаем наш новый аппаратный слой FFI
 mod session_recovery; // Горячий рестарт сессии
@@ -42,6 +43,15 @@ struct CliArgs {
     /// Опциональный путь к сырому файлу разворота для тестов без сканера
     #[arg(short, long)]
     input_file: Option<String>,
+
+    /// Адрес привязки веб-сервера (127.0.0.1 локально, 0.0.0.0 по сети).
+    /// Приоритет: CLI-флаг > config.toml > дефолт 127.0.0.1
+    #[arg(long)]
+    host: Option<String>,
+
+    /// Порт веб-сервера. Приоритет: CLI-флаг > config.toml > дефолт 54321
+    #[arg(long)]
+    port: Option<u16>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -112,6 +122,14 @@ async fn main() -> Result<(), String> {
 
     // РЕЖИМА 2 (Дефолт): Запуск веб-сервера Axum под управление Tokio для Flutter
     println!("[🌐 WEB MODE]: Запуск асинхронного сервера для Flutter Desktop...");
+
+    // Загрузка конфигурации bind-адреса (CLI-флаг > config.toml > дефолт)
+    let mut cfg = config::Config::load();
+    cfg.apply_cli_overrides(args.host.clone(), args.port);
+    if cfg.server.host == "0.0.0.0" {
+        println!("[⚠️ BIND]: Сервер слушает на 0.0.0.0 — открыт доступ по сети!");
+    }
+
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
@@ -122,7 +140,7 @@ async fn main() -> Result<(), String> {
         .route("/api/v1/scanner/process", post(process_scan_frame))
         .layer(cors);
 
-    let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
+    let addr: SocketAddr = cfg.bind_addr().parse().unwrap();
     println!("[🟢 ENGINE ACTIVE]: Сетевой шлюз открыт на http://{}", addr);
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();

@@ -1,0 +1,58 @@
+# PKGBUILD для Flat Scanner Client (Flutter, Linux x64).
+#
+# Сборка требует установленный Flutter SDK и зависимости GTK:
+#   libgtk-3-dev libnotify-dev libuuid-dev libxkbcommon-dev
+#
+# Установка:
+#   makepkg -si
+
+pkgname=flat-scanner-client
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Flat-bed scanner client for Melawvy OS (Flutter)"
+arch=(x86_64)
+url="https://example.com/flat-scanner"
+license=(MIT)
+depends=(
+  'glibc'
+  'gtk3'
+  'libnotify'
+  'libuuid'
+  'libxkbcommon'
+)
+makedepends=(
+  'flutter'
+)
+source=(
+  "https://example.com/releases/${pkgname}-${pkgver}.tar.gz"
+)
+sha256sums=('SKIP')
+
+build() {
+  cd "${srcdir}/${pkgname}-${pkgver}"
+  flutter pub get
+  flutter build linux --release
+}
+
+package() {
+  cd "${srcdir}/${pkgname}-${pkgver}"
+
+  # Бинарник и ресурсы Flutter
+  install -Dm755 build/linux/x64/release/bundle/${pkgname} \
+    "${pkgdir}/usr/bin/${pkgname}"
+
+  # Ресурсы (data/, icudtl.dat и т.д.)
+  if [ -d build/linux/x64/release/bundle/data ]; then
+    install -Dm755 -d "${pkgdir}/usr/share/${pkgname}"
+    cp -r build/linux/x64/release/bundle/data \
+      "${pkgdir}/usr/share/${pkgname}/data"
+  fi
+  if [ -f build/linux/x64/release/bundle/icudtl.dat ]; then
+    install -Dm644 build/linux/x64/release/bundle/icudtl.dat \
+      "${pkgdir}/usr/share/${pkgname}/icudtl.dat"
+  fi
+
+  # Desktop entry
+  install -Dm644 "${pkgname}.desktop" \
+    "${pkgdir}/usr/share/applications/${pkgname}.desktop"
+}

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Flat Scanner
+GenericName=Document Scanner
+Comment=Flat-bed scanner client for Melawvy OS
+Exec=flat-scanner-client
+Icon=flat-scanner-client
+Terminal=false
+Categories=Office;Scanner;
+Keywords=scan;document;book;

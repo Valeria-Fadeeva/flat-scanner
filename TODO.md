@@ -1,7 +1,8 @@
 # TODO — Задачи на доработку проекта «Канонисса-Библиотека»
 
 **Дата создания:** 14 августа 2026 г.  
-**Исходник:** docs/UNIFIED.md (разделы 10.2–10.3, 11)
+**Дата актуализации:** 16 августа 2026 г.  
+**Исходник:** TECH_SPEC.md (разделы 10–12)
 
 ---
 
@@ -33,24 +34,50 @@
 
 ## Этап C: Flutter Desktop клиент (MEDIUM-HIGH)
 
-### C1. Генерация проекта Flutter
-- [ ] Создать проект Flutter Linux desktop
-- [ ] Настроить маршрутизацию HTTP к Axum API localhost:54321
-- [ ] Подключить крейты http/bloc/flutter_bloc/provider
-- [ ] Настроить структуру lib/{presentation/domain/data}
+### C1. Генерация проекта Flutter ✅ ЗАВЕРШЕНО
+- [x] Создать проект Flutter Linux desktop (`flat-scanner-client-flutter/`)
+- [x] Настроить маршрутизацию HTTP к Axum API (настраиваемый host/port)
+- [x] Подключить крейты http/bloc/flutter_bloc/equatable/window_manager
+- [x] Настроить структуру lib/{presentation/domain/data}
 
-### C2. ScannerBLoC реактивная модель
-- [ ] Реализовать ScannerEvent (StartScan, CancelScan, AdjustVertex)
-- [ ] Реализовать ScannerState (Initial, Ready, InProgress, ProcessingInCore, PreviewReady, SavingPage, Error)
-- [ ] Настроить потоковую обработку через BlocProvider
-- [ ] Интегрировать POST запросы к Axum API
+### C2. ScannerBLoC реактивная модель ✅ ЗАВЕРШЕНО
+- [x] Реализовать ScannerEvent (StartScan, ResetScan)
+- [x] Реализовать ScannerState (Initial, Scanning, Success, Error)
+- [x] Настроить потоковую обработку через BlocProvider
+- [x] Интегрировать POST запросы к Axum API
+- **Файл:** `flat-scanner-client-flutter/lib/domain/scanner_bloc.dart`
+- **Статус:** flutter analyze OK, flutter build linux --release OK
 
-### C3. CustomPainter интерактивной сетки
+### C3. UI редактора сканирования ✅ ЗАВЕРШЕНО
+- [x] ScanEditorPage: выбор профиля, кнопка сканирования, результат
+- [x] Отображение вершин страницы и времени обработки
+- [x] Опциональный полноэкранный режим (window_manager)
+- [x] ThemeService: адаптация под KDE/Breeze + Material 3
+- **Файлы:** `lib/presentation/scan_editor_page.dart`, `lib/data/theme_service.dart`
+- **Статус:** flutter analyze OK, flutter build linux --release OK
+
+### C4. CustomPainter интерактивной сетки (отложено)
 - [ ] Реализовать ScanEditorPainter с Drag-and-Drop вершин
 - [ ] Добавить Draggable Point с UX-кольцами подсветки
 - [ ] Интегрировать GestureDetector.onPanUpdate
 - [ ] Отправка PATCH запросов к Axum API для корректировки вершин
-- **Reference:** docs/проверить.md (scan_editor_painter.dart)
+- **Статус:** Отложено — базовый UI готов, интерактивная корректировка вершин на следующий этап
+
+---
+
+## Этап F: Упаковка и дистрибуция (MEDIUM)
+
+### F1. Сервер: конфигурация и сервисы ✅ ЗАВЕРШЕНО
+- [x] CLI-флаги --host/--port + config.toml
+- [x] systemd service unit
+- [x] PKGBUILD для flat_scanner_server
+- [x] README сервера
+
+### F2. Клиент: дистрибуция ✅ ЗАВЕРШЕНО
+- [x] .desktop entry (flat-scanner-client.desktop)
+- [x] PKGBUILD для flat-scanner-client
+- [x] README клиента
+- **Статус:** flutter build linux --release OK
 
 ---
 
@@ -126,4 +153,4 @@
 - [x] Интеграция в main.rs: параметры читаются при каждой обработке кадра
 - **Файл:** `src/cv/calibration.rs`
 - **Статус:** Реализовано, интегрировано, cargo check + cargo test OK
-- **Замечание:** REST endpoint для Flutter UI ещё не создан (см. Этап C)
+- **Замечание:** REST endpoint `/api/v1/calibration` — отдельная задача (см. TECH_SPEC.md §12, Этап G1)
