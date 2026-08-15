@@ -22,7 +22,7 @@ serde_json = "1.0"
 opencv = "0.100"
 
 # TIFF/CCITT Group 4 сжатие для монохромных изображений
-tiff = "0.9"
+tiff = "0.11"
 
 [profile.release]
 opt-level = 3           # Максимальная оптимизация кода ядра
@@ -31,4 +31,4 @@ codegen-units = 1       # Уменьшает параллельные юниты
 panic = "abort"         # Отмена раскрутки стека при панике для легковесности бинарника
 
 [build-dependencies]
-pkg-config = "0.3.33"
+pkg-config = "0.3.34"

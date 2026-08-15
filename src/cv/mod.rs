@@ -1,14 +1,17 @@
 use opencv::core::{Mat, Point2f, Size};
 pub mod binarization;
+pub mod calibration;
+pub mod ccitt_encoder;
+pub mod profile_filtering;
 pub mod segmentation;
 pub mod warping;
-pub mod ccitt_encoder;
 
 // Реэкспорт структур данных для чистоты вызовов в main.rs
 pub use binarization::apply_sauvola_threshold;
 pub use segmentation::{CustomPoint, PageVertices, process_book_contours, segment_pages, detect_skew_angle, rotate_image};
 pub use warping::{dewarp_spine, perspective_warp};
 pub use ccitt_encoder::encode_ccitt_g4_to_file;
+pub use profile_filtering::{apply_profile, ProcessingProfile};
 
 /// Полная коррекция страницы: перспективная трансформация + деварпинг корешка.
 pub fn rectify_and_dewarp_page(src: &Mat, vertices: &PageVertices, target_width: u32, target_height: u32) -> Result<Mat, String> {

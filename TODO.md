@@ -15,17 +15,19 @@
 - **Файл:** `src/cv/warping.rs`
 - **Статус:** Реализовано, cargo check + cargo test OK
 
-### B2. Изоляция боковых артефактов ("боковушек")
-- [ ] Градиентный анализ плотности по периферии macro-contour
+### B2. Изоляция боковых артефактов ("боковушек") ✅ ЗАВЕРШЕНО
+- [x] Градиентный анализ плотности по периферии macro-contour
   - Обнаружение паттерна "частые чередующиеся светлые/тёмные линии"
   - Принудительный сдвиг рамки детекции внутрь на шаг дефекта
 - **Файл:** `src/cv/segmentation.rs`
-- **Зависимость:** coarse_mask() (реализовано)
+- **Статус:** Реализовано, cargo check + cargo test OK
 
-### B3. Улучшение coarse masking
-- [ ] Доработка маскирования потолка/ламп для сложных сценариев освещения
+### B3. Улучшение coarse masking ✅ ЗАВЕРШЕНО
+- [x] Доработка маскирования потолка/ламп для сложных сценариев освещения
+  - Мультимасштабный анализ (3 масштаба)
+  - Morphological closing для объединения близких пятен
 - **Файл:** `src/cv/segmentation.rs`
-- **Статус:** Базовая реализация есть, требует улучшения
+- **Статус:** Реализовано, cargo check + cargo test OK
 
 ---
 
@@ -86,15 +88,17 @@
 - **Статус:** Реализовано, интегрировано, cargo check + cargo test OK
 - **Замечание:** OpenCV требует 1-битный ввод для CCITT G4 (Bits/sample=1). При 8-битном вводе файл создаётся, но с предупреждением. Необходимо бинаризовать изображение до 1-битного формата перед вызовом.
 
-### E2. Multi-profile фильтрация
-- [ ] Создать модуль profile_filtering.rs
-- [ ] Реализовать enum ProcessingProfile:
+### E2. Multi-profile фильтрация ✅ ЗАВЕРШЕНО
+- [x] Создать модуль profile_filtering.rs
+- [x] Реализовать enum ProcessingProfile:
   - Text_BW_1bit (Sauvola + CCITT G4)
-  - Illustration_Grayscale_8bit (gamma correction + contrast)
+  - Illustration_Grayscale_8bit (gamma correction + CLAHE contrast)
   - Color_RGB_24bit (оригинальная палитра)
-- [ ] Функция apply_profile(mat, profile)
-- [ ] Передача параметра профиля из Flutter UI через API
+- [x] Функция apply_profile(mat, profile, k_factor, window_size)
+- [x] Передача параметра профиля из Flutter UI через API (поле `profile` в ScanTriggerRequest)
+- [x] Сохранение: CCITT G4 TIFF для 1-бит, PNG для grayscale/color
 - **Файл:** `src/cv/profile_filtering.rs`
+- **Статус:** Реализовано, интегрировано в main.rs, cargo check + cargo test OK
 
 ---
 
@@ -110,8 +114,12 @@
   - Сборку обновлённого PDF
 - **Файл:** `src/pdf_importer.rs`
 
-### M8. Пакетная калибровка порогов Sauvola
-- [ ] Реализовать hot-reload параметра k_factor
-- [ ] Добавить динамическую реконфигурацию через tokio::sync::Mutex
-- [ ] Интегрировать с Flutter UI для мгновенного результата
-- **Значения:** 70, 80, 90, 110 единиц смещения
+### M8. Пакетная калибровка порогов Sauvola ✅ ЗАВЕРШЕНО
+- [x] Реализовать hot-reload параметра k_factor (отслеживание mtime файла)
+- [x] Динамическая реконфигурация через std::sync::Mutex + троттлинг 500мс
+- [x] Файл калибровки `calibration.json` (k_factor, window_size, profile)
+- [x] Методы `reload()` и `save()` для Flutter UI (endpoint /api/v1/calibration — TODO)
+- [x] Интеграция в main.rs: параметры читаются при каждой обработке кадра
+- **Файл:** `src/cv/calibration.rs`
+- **Статус:** Реализовано, интегрировано, cargo check + cargo test OK
+- **Замечание:** REST endpoint для Flutter UI ещё не создан (см. Этап C)

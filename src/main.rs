@@ -46,6 +46,9 @@ struct CliArgs {
 struct ScanTriggerRequest {
     uuid: String,
     _threshold_preset: i32,
+    /// Профиль обработки (E2): text_bw_1bit | illustration_grayscale_8bit | color_rgb_24bit
+    #[serde(default)]
+    profile: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -255,10 +258,6 @@ async fn process_scan_frame(
         rotated_frame.clone()
     });
 
-    // Бинаризация всего разворота (для превью/дальнейшей обработки)
-    let _binary_frame = cv::apply_sauvola_threshold(&corrected_page, 0.2, 15)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
     // Сегментация разворота на левую и правую страницы
     let (left_page, right_page) = cv::segment_pages(&corrected_page)
         .unwrap_or_else(|e| {
@@ -276,47 +275,62 @@ async fn process_scan_frame(
     println!("[📐 SKEW RIGHT] Угол скоса правой страницы: {:.2}°", right_skew);
     let right_aligned = cv::rotate_image(&right_page, -right_skew).unwrap_or(right_page.clone());
 
-    // Бинаризация каждой страницы отдельно
-    let binary_left = cv::apply_sauvola_threshold(&left_aligned, 0.2, 15)
+    // M8: Hot-reload калибровки (k_factor, window_size, profile из calibration.json)
+    let calib = cv::calibration::global_calibration().get();
+    let profile = match &payload.profile {
+        Some(p) => cv::ProcessingProfile::from_str_lenient(p),
+        None => calib.processing_profile(),
+    };
+    println!(
+        "[⚙️ CALIB] k={}, window={}, profile={:?}",
+        calib.k_factor, calib.window_size, profile
+    );
+
+    // E2: Multi-profile обработка каждой страницы
+    let final_left = cv::apply_profile(&left_aligned, profile, calib.k_factor, calib.window_size)
         .unwrap_or_else(|e| {
-            println!("[⚠️ BIN LEFT] Ошибка бинаризации левой страницы: {}", e);
+            println!("[⚠️ BIN LEFT] Ошибка обработки левой страницы: {}", e);
             left_aligned.clone()
         });
-    let binary_right = cv::apply_sauvola_threshold(&right_aligned, 0.2, 15)
+    let final_right = cv::apply_profile(&right_aligned, profile, calib.k_factor, calib.window_size)
         .unwrap_or_else(|e| {
-            println!("[⚠️ BIN RIGHT] Ошибка бинаризации правой страницы: {}", e);
+            println!("[⚠️ BIN RIGHT] Ошибка обработки правой страницы: {}", e);
             right_aligned.clone()
         });
 
-    // Инвертация: бумага белая, текст черный
-    let mut final_left = Mat::default();
-    let mut final_right = Mat::default();
-    opencv::core::bitwise_not(&binary_left, &mut final_left, &Mat::default())
-        .unwrap_or_else(|e| {
-            println!("[⚠️ INV LEFT] Ошибка инверсии левой страницы: {}", e);
-            left_aligned.clone().clone_into(&mut final_left);
-        });
-    opencv::core::bitwise_not(&binary_right, &mut final_right, &Mat::default())
-        .unwrap_or_else(|e| {
-            println!("[⚠️ INV RIGHT] Ошибка инверсии правой страницы: {}", e);
-            right_aligned.clone().clone_into(&mut final_right);
-        });
-
-    // Сохранение страниц в CCITT Group 4 TIFF
+    // Сохранение страниц: CCITT G4 TIFF для 1-бит, PNG для grayscale/color
     let output_dir = "./split";
     if !std::path::Path::new(output_dir).exists() {
         std::fs::create_dir_all(output_dir).ok();
     }
-    let left_path = format!("{}/page_{}_left.tiff", payload.uuid, start_time.elapsed().as_millis());
-    let right_path = format!("{}/page_{}_right.tiff", payload.uuid, start_time.elapsed().as_millis());
+    let (left_path, right_path) = if profile == cv::ProcessingProfile::TextBw1bit {
+        (
+            format!("{}/page_{}_left.tiff", output_dir, payload.uuid),
+            format!("{}/page_{}_right.tiff", output_dir, payload.uuid),
+        )
+    } else {
+        (
+            format!("{}/page_{}_left.png", output_dir, payload.uuid),
+            format!("{}/page_{}_right.png", output_dir, payload.uuid),
+        )
+    };
 
-    match cv::encode_ccitt_g4_to_file(&final_left, &left_path) {
-        Ok(size) => println!("[💾 CCITT G4 LEFT] {} KB", size / 1024),
-        Err(e) => println!("[⚠️ SAVE LEFT] Ошибка кодирования левой страницы: {}", e),
-    }
-    match cv::encode_ccitt_g4_to_file(&final_right, &right_path) {
-        Ok(size) => println!("[💾 CCITT G4 RIGHT] {} KB", size / 1024),
-        Err(e) => println!("[⚠️ SAVE RIGHT] Ошибка кодирования правой страницы: {}", e),
+    if profile == cv::ProcessingProfile::TextBw1bit {
+        match cv::encode_ccitt_g4_to_file(&final_left, &left_path) {
+            Ok(size) => println!("[💾 CCITT G4 LEFT] {} KB", size / 1024),
+            Err(e) => println!("[⚠️ SAVE LEFT] Ошибка кодирования левой страницы: {}", e),
+        }
+        match cv::encode_ccitt_g4_to_file(&final_right, &right_path) {
+            Ok(size) => println!("[💾 CCITT G4 RIGHT] {} KB", size / 1024),
+            Err(e) => println!("[⚠️ SAVE RIGHT] Ошибка кодирования правой страницы: {}", e),
+        }
+    } else {
+        let params = opencv::core::Vector::default();
+        imgcodecs::imwrite(&left_path, &final_left, &params)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("imwrite left: {}", e)))?;
+        imgcodecs::imwrite(&right_path, &final_right, &params)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("imwrite right: {}", e)))?;
+        println!("[💾 PNG] Сохранено: {} и {}", left_path, right_path);
     }
 
     println!("[✅ WEB SUCCESS] Разворот обработан и сохранен: {} и {}", left_path, right_path);

@@ -22,82 +22,116 @@ pub struct PageVertices {
     pub p4: CustomPoint,
 }
 
+/// B3: Оценка качества кандидата маски страницы.
+/// Чем выше score — тем лучше кандидат:
+///   - площадь в диапазоне 10%–95% кадра (страница, а не лампа/тень);
+///   - высокая выпуклость (страница — почти выпуклый объект);
+///   - компактность (площадь / площадь выпуклой оболочки).
+fn mask_candidate_score(contour: &Vector::<Point>, image_area: f64) -> f64 {
+    let area = geometry::contour_area(contour, false).unwrap_or(0.0);
+    if area < image_area * 0.10 || area > image_area * 0.95 {
+        return 0.0;
+    }
+
+    let mut hull = Vector::<Point>::new();
+    if geometry::convex_hull(contour, &mut hull, false, true).is_err() {
+        return 0.0;
+    }
+    let hull_area = geometry::contour_area(&hull, false).unwrap_or(0.0);
+    if hull_area <= 0.0 {
+        return 0.0;
+    }
+
+    let solidity = area / hull_area; // 0..1, страница близка к 1.0
+    solidity
+}
+
 /// Coarse masking: отсечь потолок/лампы при открытой крышке сканера.
-/// Алгоритм:
-///   1. Сильное размытие → Otsu бинаризация (страница обычно темнее фона).
-///   2. Найти крупнейший контур по площади.
-///   3. Создать одноканальную маску из этого контура.
-///   4. Применить bitwise_and к исходному изображению.
+/// B3: мультимасштабный алгоритм для сложных сценариев освещения:
+///   1. Grayscale.
+///   2. Несколько масштабов размытия (51/101/201) → Otsu INV на каждом.
+///   3. На каждом масштабе — кандидаты контуров, оценка solidity.
+///   4. Лучший кандидат (макс. solidity при валидной площади).
+///   5. Морфологическое закрытие маски (заполнение провалов у ламп).
+///   6. bitwise_and к исходному изображению.
 /// Возвращает очищенный кадр без ярких артефактов за пределами страницы.
 fn coarse_mask(src: &Mat) -> Result<Mat, String> {
     let mut gray = Mat::default();
-    imgproc::cvt_color(
-        src,
-        &mut gray,
-        imgproc::COLOR_BGR2GRAY,
-        0,
-        core::AlgorithmHint::ALGO_HINT_APPROX,
-    )
-    .map_err(|e| e.to_string())?;
-
-    let mut blurred = Mat::default();
-    imgproc::gaussian_blur(
-        &gray,
-        &mut blurred,
-        Size::new(51, 51),
-        0.0,
-        0.0,
-        BORDER_DEFAULT,
-        core::AlgorithmHint::ALGO_HINT_APPROX,
-    )
-    .map_err(|e| e.to_string())?;
-
-    let mut thresh = Mat::default();
-    imgproc::threshold(&blurred, &mut thresh, 0.0, 255.0, imgproc::THRESH_BINARY_INV + imgproc::THRESH_OTSU)
+    if src.channels() > 1 {
+        imgproc::cvt_color(
+            src,
+            &mut gray,
+            imgproc::COLOR_BGR2GRAY,
+            0,
+            core::AlgorithmHint::ALGO_HINT_APPROX,
+        )
         .map_err(|e| e.to_string())?;
-
-    let mut contours_vec = Vector::<Vector::<Point>>::new();
-    imgproc::find_contours(
-        &thresh,
-        &mut contours_vec,
-        imgproc::RETR_EXTERNAL,
-        imgproc::CHAIN_APPROX_SIMPLE,
-        Point::new(0, 0),
-    )
-    .map_err(|e| e.to_string())?;
-
-    if contours_vec.is_empty() {
-        return Ok(src.clone());
+    } else {
+        gray = src.clone();
     }
 
-    let mut max_area = 0.0_f64;
-    let mut best_idx = 0_usize;
-    for i in 0..contours_vec.len() {
-        let contour = contours_vec.get(i).map_err(|e| e.to_string())?;
-        let area = geometry::contour_area(&contour, false).unwrap_or(0.0);
-        if area > max_area {
-            max_area = area;
-            best_idx = i;
+    let image_area = src.rows() as f64 * src.cols() as f64;
+
+    // Мультимасштабный поиск лучшего кандидата
+    let blur_sizes = [51_i32, 101_i32, 201_i32];
+    let mut best_score = 0.0_f64;
+    let mut best_contour: Option<Vector::<Point>> = None;
+
+    for &ksize in &blur_sizes {
+        let mut blurred = Mat::default();
+        imgproc::gaussian_blur(
+            &gray,
+            &mut blurred,
+            Size::new(ksize, ksize),
+            0.0,
+            0.0,
+            BORDER_DEFAULT,
+            core::AlgorithmHint::ALGO_HINT_APPROX,
+        )
+        .map_err(|e| e.to_string())?;
+
+        let mut thresh = Mat::default();
+        imgproc::threshold(&blurred, &mut thresh, 0.0, 255.0, imgproc::THRESH_BINARY_INV + imgproc::THRESH_OTSU)
+            .map_err(|e| e.to_string())?;
+
+        let mut contours_vec = Vector::<Vector::<Point>>::new();
+        imgproc::find_contours(
+            &thresh,
+            &mut contours_vec,
+            imgproc::RETR_EXTERNAL,
+            imgproc::CHAIN_APPROX_SIMPLE,
+            Point::new(0, 0),
+        )
+        .map_err(|e| e.to_string())?;
+
+        for i in 0..contours_vec.len() {
+            let contour = contours_vec.get(i).map_err(|e| e.to_string())?;
+            let score = mask_candidate_score(&contour, image_area);
+            if score > best_score {
+                best_score = score;
+                best_contour = Some(contour.clone());
+            }
         }
     }
 
-    // Если крупнейший объект слишком мал — маска не нужна (возможно, страница на весь кадр)
-    let image_area = src.rows() as f64 * src.cols() as f64;
-    if max_area < image_area * 0.05 {
-        return Ok(src.clone());
-    }
+    let best_contour = match best_contour {
+        Some(c) => c,
+        None => return Ok(src.clone()), // страница на весь кадр — маска не нужна
+    };
 
+    // Строим маску из лучшего кандидата
     let mut mask = Mat::zeros(src.rows(), src.cols(), core::CV_8UC1)
         .map_err(|e| e.to_string())?
         .to_mat()
         .map_err(|e| e.to_string())?;
 
-    // Пустая иерархия для draw_contours
+    let mut single_contour = Vector::<Vector::<Point>>::new();
+    single_contour.push(best_contour.clone());
     let empty_hierarchy = Mat::default();
     imgproc::draw_contours(
         &mut mask,
-        &contours_vec,
-        best_idx as i32,
+        &single_contour,
+        0,
         core::Scalar::all(255.0),
         -1,
         -1,
@@ -107,11 +141,154 @@ fn coarse_mask(src: &Mat) -> Result<Mat, String> {
     )
     .map_err(|e| e.to_string())?;
 
+    // Морфологическое закрытие: заполняем провалы (тени ламп, складки)
+    let close_kernel = imgproc::get_structuring_element(
+        imgproc::MORPH_ELLIPSE,
+        Size::new(15, 15),
+        Point::new(0, 0),
+    )
+    .map_err(|e| e.to_string())?;
+    let mut closed_mask = Mat::default();
+    imgproc::morphology_ex(
+        &mask,
+        &mut closed_mask,
+        imgproc::MORPH_CLOSE,
+        &close_kernel,
+        Point::new(-1, -1),
+        2,
+        BORDER_DEFAULT,
+        core::Scalar::all(0.0),
+    )
+    .map_err(|e| e.to_string())?;
+
     let mut result = Mat::default();
-    core::bitwise_and(src, &mask, &mut result, &Mat::default())
+    core::bitwise_and(src, &closed_mask, &mut result, &Mat::default())
         .map_err(|e| e.to_string())?;
 
     Ok(result)
+}
+
+/// B2: Изоляция боковых артефактов ("боковушек").
+///
+/// Градиентный анализ плотности по периферии macro-contour:
+///   1. Строит маску крупнейшего контура.
+///   2. Извлекает полосу (band) шириной `band_width` пикселей вокруг контура.
+///   3. Вычисляет частоту чередования светлых/тёмных пикселей вдоль периметра.
+///   4. Если частота выше порога — паттерн "боковушек" обнаружен.
+///   5. Эродирует маску на `erode_iters` итераций для сдвига рамки внутрь.
+///
+/// Возвращает улучшенную маску (CV_8UC1, 0/255).
+fn isolate_side_artifacts(
+    src: &Mat,
+    mask: &Mat,
+    band_width: i32,
+    erode_iters: i32,
+) -> Result<Mat, String> {
+    let rows = mask.rows() as usize;
+    let cols = mask.cols() as usize;
+
+    // 1. Извлекаем полосу вокруг контура: XOR между маской и её эродированной версией
+    let kernel = imgproc::get_structuring_element(
+        imgproc::MORPH_RECT,
+        Size::new(band_width, band_width),
+        Point::new(0, 0),
+    )
+    .map_err(|e| e.to_string())?;
+
+    let mut eroded = Mat::default();
+    imgproc::erode(
+        mask,
+        &mut eroded,
+        &kernel,
+        Point::new(-1, -1),
+        1,
+        BORDER_DEFAULT,
+        core::Scalar::all(0.0),
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Полоса = маска XOR эродированная маска
+    let mut band = Mat::default();
+    core::bitwise_xor(mask, &eroded, &mut band, &Mat::default())
+        .map_err(|e| e.to_string())?;
+
+    // 2. Анализируем полосу: считаем чередования по строкам
+    let mut gray_band = Mat::default();
+    if src.channels() > 1 {
+        imgproc::cvt_color(
+            src,
+            &mut gray_band,
+            imgproc::COLOR_BGR2GRAY,
+            0,
+            core::AlgorithmHint::ALGO_HINT_APPROX,
+        )
+        .map_err(|e| e.to_string())?;
+    } else {
+        gray_band = src.clone();
+    }
+
+    // Считаем частоту чередований в полосе
+    let mut transitions: i32 = 0;
+    let mut total_samples: i32 = 0;
+
+    unsafe {
+        let band_data = std::slice::from_raw_parts(band.data() as *const u8, rows * cols);
+        let gray_data = std::slice::from_raw_parts(gray_band.data() as *const u8, rows * cols);
+
+        for y in 0..rows {
+            let mut prev_state: Option<bool> = None;
+            for x in 0..cols {
+                let idx = y * cols + x;
+                if band_data[idx] > 0 {
+                    // Пиксель в полосе — определяем светлый/тёмный
+                    let is_dark = gray_data[idx] < 128;
+                    if let Some(prev) = prev_state {
+                        if prev != is_dark {
+                            transitions += 1;
+                        }
+                    }
+                    prev_state = Some(is_dark);
+                    total_samples += 1;
+                }
+            }
+        }
+    }
+
+    // 3. Если частота чередований > 30% — это "боковушки"
+    let transition_ratio = if total_samples > 10 {
+        transitions as f64 / total_samples as f64
+    } else {
+        0.0
+    };
+
+    if transition_ratio > 0.30 && erode_iters > 0 {
+        // Эродируем маску для сдвига внутрь
+        let erode_kernel = imgproc::get_structuring_element(
+            imgproc::MORPH_RECT,
+            Size::new(3, 3),
+            Point::new(0, 0),
+        )
+        .map_err(|e| e.to_string())?;
+
+        let mut result = mask.clone();
+        for _ in 0..erode_iters {
+            let mut eroded_iter = Mat::default();
+            imgproc::erode(
+                &result,
+                &mut eroded_iter,
+                &erode_kernel,
+                Point::new(-1, -1),
+                1,
+                BORDER_DEFAULT,
+                core::Scalar::all(0.0),
+            )
+            .map_err(|e| e.to_string())?;
+            result = eroded_iter;
+        }
+        return Ok(result);
+    }
+
+    Ok(mask.clone())
 }
 
 /// Детекция вершин страницы на бинарном изображении.
@@ -119,9 +296,10 @@ fn coarse_mask(src: &Mat) -> Result<Mat, String> {
 ///   1. Coarse masking для отсечения артефактов.
 ///   2. Бинаризация Otsu.
 ///   3. Поиск контуров → крупнейший контур.
-///   4. Аппроксимация полигоном (approxPolyDP) до 4 точек.
-///   5. Если не 4 точки → minAreaRect.
-///   6. Сортировка вершин TL → TR → BR → BL.
+///   4. B2: Изоляция боковых артефактов (эрозия при обнаружении паттерна).
+///   5. Аппроксимация полигоном (approxPolyDP) до 4 точек.
+///   6. Если не 4 точки → minAreaRect.
+///   7. Сортировка вершин TL → TR → BR → BL.
 pub fn process_book_contours(src: &Mat) -> Result<PageVertices, String> {
     // Coarse masking
     let masked = coarse_mask(src)?;
@@ -178,6 +356,46 @@ pub fn process_book_contours(src: &Mat) -> Result<PageVertices, String> {
     }
 
     let best_contour = contours_vec.get(best_idx).map_err(|e| e.to_string())?;
+
+    // B2: Изоляция боковых артефактов — эрозия маски при обнаружении паттерна
+    let mut page_mask = Mat::zeros(src.rows(), src.cols(), core::CV_8UC1)
+        .map_err(|e| e.to_string())?
+        .to_mat()
+        .map_err(|e| e.to_string())?;
+    let empty_hier = Mat::default();
+    imgproc::draw_contours(
+        &mut page_mask,
+        &contours_vec,
+        best_idx as i32,
+        core::Scalar::all(255.0),
+        -1,
+        -1,
+        &empty_hier,
+        0,
+        Point::new(0, 0),
+    )
+    .map_err(|e| e.to_string())?;
+
+    let refined_mask = isolate_side_artifacts(src, &page_mask, 8, 3)?;
+
+    // Пересчитываем контур из улучшенной маски
+    let mut refined_thresh = Mat::default();
+    imgproc::threshold(&refined_mask, &mut refined_thresh, 127.0, 255.0, imgproc::THRESH_BINARY)
+        .map_err(|e| e.to_string())?;
+    let mut refined_contours = Vector::<Vector::<Point>>::new();
+    imgproc::find_contours(
+        &refined_thresh,
+        &mut refined_contours,
+        imgproc::RETR_EXTERNAL,
+        imgproc::CHAIN_APPROX_SIMPLE,
+        Point::new(0, 0),
+    )
+    .map_err(|e| e.to_string())?;
+
+    let best_contour = match refined_contours.get(0) {
+        Ok(rc) => rc.clone(),
+        Err(_) => best_contour.clone(),
+    };
 
     // Аппроксимация четырёхугольником
     let perimeter = geometry::arc_length(&best_contour, true).unwrap_or(0.0);
