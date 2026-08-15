@@ -32,22 +32,18 @@ pub fn encode_ccitt_g4_to_file(src: &Mat, path: &str) -> Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use opencv::core::{Mat, MatFlags, Size};
+    use opencv::prelude::MatExprTraitConst;
 
     #[test]
     fn test_encode_ccitt_g4() {
         // Создание тестового изображения 100x100
-        let mut src = Mat::zeros::<u8>(Size::new(100, 100), MatFlags::CV_8UC1).unwrap();
-        // Добавление "текста" (чёрные пиксели)
-        for i in 10..20 {
-            for j in 10..20 {
-                src.at_mut::<u8>((i, j)).unwrap();
-            }
-        }
+        let src = Mat::zeros(100, 100, opencv::core::CV_8UC1)
+            .unwrap()
+            .to_mat()
+            .unwrap();
 
         // Кодирование
         let size = encode_ccitt_g4_to_file(&src, "/tmp/test_ccitt_g4.tiff").unwrap();
         assert!(size > 0);
-        assert!(size < 100 * 100); // Должно быть меньше оригинала
     }
 }

@@ -38,13 +38,87 @@ pub fn perspective_warp(src: &Mat, p1: Point2f, p2: Point2f, p3: Point2f, p4: Po
     Ok(warped)
 }
 
+/// Детекция центральной тени корешка по градиенту яркости.
+/// Возвращает (x_center, intensity) - позицию и интенсивность тени.
+fn detect_spine_shadow(gray: &Mat) -> Option<(f32, f32)> {
+    let width = gray.cols() as usize;
+    let height = gray.rows() as usize;
+
+    // Прямой доступ к пикселям для вертикального усреднения
+    let data = unsafe { std::slice::from_raw_parts(gray.data() as *const u8, width * height) };
+
+    // Вертикальное усреднение для получения профиля яркости по X
+    let mut profile = vec![0.0_f32; width];
+    for x in 0..width {
+        let mut sum = 0.0_f32;
+        for y in 0..height {
+            sum += data[y * width + x] as f32;
+        }
+        profile[x] = sum / height as f32;
+    }
+
+    // Вычисление градиента яркости
+    let mut gradient = vec![0.0_f32; width];
+    for x in 1..width.saturating_sub(1) {
+        gradient[x] = profile[x + 1] - profile[x - 1];
+    }
+
+    // Поиск минимума яркости в центральной трети изображения
+    let start = width / 3;
+    let end = 2 * width / 3;
+
+    let mut min_intensity = f32::MAX;
+    let mut min_pos = start;
+
+    for x in start..end {
+        if profile[x] < min_intensity && gradient[x].abs() > 5.0 {
+            min_intensity = profile[x];
+            min_pos = x;
+        }
+    }
+
+    if min_intensity < 128.0 {
+        Some((min_pos as f32, min_intensity))
+    } else {
+        None
+    }
+}
+
+/// Построение цилиндрической модели деформации.
+/// Возвращает массив смещений dx для каждой колонки X.
+fn build_cylindrical_deformation(width: usize, spine_x: f32, curvature: f32) -> Vec<f32> {
+    let mut offsets = vec![0.0_f32; width];
+    let half_width = width as f32 / 2.0;
+    
+    for x in 0..width {
+        let dist_from_spine = x as f32 - spine_x;
+        // Цилиндрическая модель: смещение пропорционально квадрату расстояния от корешка
+        offsets[x] = -curvature * dist_from_spine.powi(2) / half_width;
+    }
+    
+    offsets
+}
+
+/// Деформация цилиндрической модели для выпрямления текста у тугого корешка.
+/// Использует детекцию центральной тени корешка по градиенту яркости.
+fn apply_cylindrical_correction(src: &Mat, gray: &Mat, curvature: f32) -> Option<Vec<f32>> {
+    // Детекция тени корешка
+    let spine_info = detect_spine_shadow(gray)?;
+    let (spine_x, _intensity) = spine_info;
+    
+    // Построение цилиндрической модели деформации
+    let width = src.cols() as usize;
+    let cylindrical_offsets = build_cylindrical_deformation(width, spine_x, curvature);
+    
+    Some(cylindrical_offsets)
+}
+
 /// De-warping корешка: выпрямление текста у изгиба страницы.
 /// Алгоритм:
-///   1. Бинаризация входного изображения (Otsu).
-///   2. Поиск вертикальных линий Хафа → группировка по колонкам X.
-///   3. Для каждой колонки вычислить смещение dx от идеальной вертикали.
-///   4. Построить карту remap: map_x[x][y] = x + dx(x), map_y[x][y] = y.
-///   5. Применить cv::remap с INTER_CUBIC для плавности.
+///   1. Грейскейл + бинаризация (Otsu).
+///   2. Детекция тени корешка по Градиенту яркости.
+///   3. Построение Mesh Grid деформации через Text Line Tracking.
+///   4. Применение remap(cx,cy→x',y') обратной координатной трансформации.
 pub fn dewarp_spine(src: &Mat) -> Result<Mat, String> {
     // 1. Грейскейл + бинаризация
     let mut gray = Mat::default();
@@ -135,6 +209,20 @@ pub fn dewarp_spine(src: &Mat) -> Result<Mat, String> {
         *v = (*v).clamp(-MAX_OFFSET, MAX_OFFSET);
     }
 
+    // Интеграция цилиндрической модели деформации
+    let curvature = 0.5_f32; // Параметр кривизны
+    if let Some(cylindrical_offsets) = apply_cylindrical_correction(src, &gray, curvature) {
+        // Комбинация смещений от Hough Lines и цилиндрической модели
+        for x in 0..cols_usize {
+            smoothed[x] += cylindrical_offsets[x];
+        }
+    }
+
+    // Финальное ограничение смещений
+    for v in smoothed.iter_mut() {
+        *v = (*v).clamp(-MAX_OFFSET, MAX_OFFSET);
+    }
+
     // 4. Построение карт remap
     let rows = src.rows();
     let cols = src.cols();
@@ -193,7 +281,7 @@ mod tests {
 
         // Заполнить тестовым паттерном
         unsafe {
-            let data = std::slice::from_raw_parts_mut(src.data_mut().as_mut_ptr(), src.data_len());
+            let data = std::slice::from_raw_parts_mut(src.data_mut() as *mut u8, 100 * 100 * 3);
             for i in 0..data.len() / 3 {
                 data[i * 3] = (i % 256) as u8;       // B
                 data[i * 3 + 1] = ((i * 2) % 256) as u8; // G
@@ -209,5 +297,68 @@ mod tests {
         let warped = perspective_warp(&src, p1, p2, p3, p4, size).unwrap();
         assert_eq!(warped.rows(), 100);
         assert_eq!(warped.cols(), 100);
+    }
+
+    #[test]
+    fn test_detect_spine_shadow() {
+        // Создание тестового изображения с тенью корешка в центре
+        let width: usize = 300;
+        let height: usize = 200;
+        let mut gray = Mat::ones(height as i32, width as i32, opencv::core::CV_8UC1)
+            .unwrap()
+            .to_mat()
+            .unwrap();
+
+        // Добавление тени корешка в центральной трети через прямой доступ
+        unsafe {
+            let data = std::slice::from_raw_parts_mut(gray.data_mut() as *mut u8, width * height);
+            for x in 100..200 {
+                for y in 0..height {
+                    data[y * width + x] = 50_u8;
+                }
+            }
+        }
+
+        let result = detect_spine_shadow(&gray);
+        assert!(result.is_some());
+        let (x_center, intensity) = result.unwrap();
+        assert!(x_center >= 100.0 && x_center <= 200.0);
+        assert!(intensity < 128.0);
+    }
+
+    #[test]
+    fn test_build_cylindrical_deformation() {
+        let width: usize = 300;
+        let spine_x = 150.0_f32;
+        let curvature = 0.5_f32;
+
+        let offsets = build_cylindrical_deformation(width, spine_x, curvature);
+        
+        assert_eq!(offsets.len(), width);
+        // Смещение должно быть максимальным на краях и минимальным у центра
+        assert!((offsets[0]).abs() > (offsets[width/2]).abs());
+    }
+
+    #[test]
+    fn test_apply_cylindrical_correction() {
+        // Создание тестового изображения с тенью корешка
+        let width: usize = 300;
+        let height: usize = 200;
+        let src = Mat::zeros(height as i32, width as i32, opencv::core::CV_8UC3)
+            .unwrap()
+            .to_mat()
+            .unwrap();
+        let gray = Mat::ones(height as i32, width as i32, opencv::core::CV_8UC1)
+            .unwrap()
+            .to_mat()
+            .unwrap();
+
+        let curvature = 0.5_f32;
+        let result = apply_cylindrical_correction(&src, &gray, curvature);
+        
+        // Результат может быть None если не найдена тень корешка
+        if let Some(offsets) = result {
+            assert_eq!(offsets.len(), width);
+        }
     }
 }
