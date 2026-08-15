@@ -16,6 +16,7 @@ use tower_http::cors::{Any, CorsLayer};
 
 mod cv;
 mod sane_core; // Подключаем наш новый аппаратный слой FFI
+mod session_store; // Транзакционное хранение сессий сканирования
 
 /// ТЗ ПК "Канонисса-Библиотека" v1.0 — Двухрежимное ядро (Web / CLI)
 #[derive(Parser, Debug)]
@@ -62,6 +63,18 @@ struct ScanResponse {
 #[tokio::main]
 async fn main() -> Result<(), String> {
     let args = CliArgs::parse();
+
+    // D1: Инициализация Session Store (SQLite)
+    let db_path = "./kanonissa.db";
+    let session_store = session_store::global_session_store(db_path);
+    println!("[💾 SESSION STORE]: Инициализирован SQLite на {}", db_path);
+
+    // Проверка на незавершённую сессию (hot-restart)
+    if let Ok(store) = session_store.lock() {
+        if let Ok(Some(uuid)) = store.get_in_progress_book() {
+            println!("[🔄 HOT RESTART]: Обнаружена незавершённая сессия: {}", uuid);
+        }
+    }
 
     // ПРОВЕРКА РЕЖИМА 1: Если передан флаг --cli, запускаем локальный конвейер в RAM
     if args.cli {

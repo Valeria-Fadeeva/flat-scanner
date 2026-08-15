@@ -56,14 +56,15 @@
 
 ## Этап D: Session Store + Hot Restart (HIGH)
 
-### D1. SQLite транзакционная модель
-- [ ] Создать модуль session_store.rs на базе rusqlite
-- [ ] Реализовать схему БД:
+### D1. SQLite транзакционная модель ✅ ЗАВЕРШЕНО
+- [x] Создать модуль session_store.rs на базе rusqlite
+- [x] Реализовать схему БД:
   - Таблица books (uuid, name, start_date, total_pages, status)
   - Таблица spreads (book_uuid, spread_index, left_path, right_path, left_vertices, right_vertices, threshold_k, status)
-- [ ] Атомарные INSERT+UPDATE операции в BEGIN TRANSACTION...COMMIT
-- [ ] Настроить journal_mode=WAL
+- [x] Атомарные INSERT+UPDATE операции в BEGIN TRANSACTION...COMMIT
+- [x] Настроить journal_mode=WAL
 - **Файл:** `src/session_store.rs`
+- **Статус:** Реализовано, интегрировано в main.rs, cargo check + cargo test OK (28 тестов)
 
 ### D2. Горячий рестарт сессии
 - [ ] Логика восстановления при старте:
