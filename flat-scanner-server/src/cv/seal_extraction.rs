@@ -1,10 +1,13 @@
 //! G3 (M5): Сохранение печатей и штампов.
 //!
-//! Библиотечные штампы и печати (синие/красные чернила) — это насыщенные
-//! цветовые области, которые Sauvola-бинаризация стирает как «фон».
-//! Алгоритм изолирует печать в отдельном цветовом канале (инвертированный
-//! Cr в YCbCr), очищает от шума бумаги и налагает поверх бинаризированного
-//! текстового слоя, чтобы печать сохранилась в финальном 1-битном растре.
+//! Библиотечные штампы и печати — это насыщенные цветовые области, которые
+//! Sauvola-бинаризация стирает как «фон». Чернила бывают красными, синими,
+//! голубыми и фиолетовыми (зависит от краски и десятилетия), поэтому
+//! детекция идёт по **насыщенности (S-канал HSV)**: бумага всегда
+//! низконасыщенная, а любая цветная краска даёт высокую насыщенность
+//! независимо от оттенка. Алгоритм очищает маску от шума бумаги и налагает
+//! её поверх бинаризированного текстового слоя, чтобы печать сохранилась
+//! в финальном 1-битном растре.
 //!
 //! См. TECH_SPEC.md §5.4.
 
@@ -33,41 +36,31 @@ pub fn extract_seal_mask(src: &Mat) -> Result<Mat, String> {
         return Ok(Mat::default());
     }
 
-    // 1. Переход в YCbCr.
-    let mut ycrcb = Mat::default();
+    // 1. Переход в HSV.
+    let mut hsv = Mat::default();
     imgproc::cvt_color(
         src,
-        &mut ycrcb,
-        imgproc::COLOR_BGR2YCrCb,
+        &mut hsv,
+        imgproc::COLOR_BGR2HSV,
         0,
         core::AlgorithmHint::ALGO_HINT_APPROX,
     )
     .map_err(|e| e.to_string())?;
 
-    // 2. Извлечение канала Cr (индекс 2).
+    // 2. Извлечение канала S — насыщенность (индекс 1). Белая/серая бумага
+    //    имеет S≈0, любая цветная краска (красная, синяя, голубая,
+    //    фиолетовая) — высокую S независимо от оттенка.
     let mut channels = Vector::<Mat>::new();
-    core::split(&ycrcb, &mut channels).map_err(|e| e.to_string())?;
+    core::split(&hsv, &mut channels).map_err(|e| e.to_string())?;
     if channels.len() != 3 {
-        return Err("YCbCr: ожидалось 3 канала".to_string());
+        return Err("HSV: ожидалось 3 канала".to_string());
     }
-    let cr = channels.get(2).map_err(|e| e.to_string())?;
+    let saturation = channels.get(1).map_err(|e| e.to_string())?;
 
-    // 3. Инвертированный Cr: 255 - Cr. Насыщенные чернила отклоняются от
-    //    нейтрального (Cr≈128), бумага остаётся около 127 после инверсии.
-    let mut inv_cr = Mat::default();
-    core::subtract(
-        &core::Scalar::all(255.0),
-        &cr,
-        &mut inv_cr,
-        &Mat::default(),
-        -1,
-    )
-    .map_err(|e| e.to_string())?;
-
-    // 4. Порог Otsu: разделяет печать и бумагу по модальности канала.
+    // 3. Порог Otsu: разделяет печать и бумагу по модальности насыщенности.
     let mut thresholded = Mat::default();
     imgproc::threshold(
-        &inv_cr,
+        &saturation,
         &mut thresholded,
         0.0,
         255.0,
@@ -160,8 +153,9 @@ pub fn overlay_seal_on_text(text_layer: &Mat, seal_mask: &Mat) -> Result<Mat, St
 mod tests {
     use super::*;
 
-    /// Создаёт BGR-изображение: белая бумага + красное пятно (печать).
-    fn make_page_with_seal(rows: i32, cols: i32) -> Mat {
+    /// Создаёт BGR-изображение: белая бумага + цветное пятно (печать).
+    /// `bgr` — цвет чернил в порядке (B, G, R).
+    fn make_page_with_seal(rows: i32, cols: i32, bgr: (u8, u8, u8)) -> Mat {
         let mut mat = Mat::zeros(rows, cols, core::CV_8UC3)
             .unwrap()
             .to_mat()
@@ -172,28 +166,45 @@ mod tests {
             for i in 0..(rows * cols * 3) as usize {
                 data[i] = 255;
             }
-            // Красное пятно в центре (BGR = 0,0,255)
+            // Цветное пятно в центре
             let cy = rows / 2;
             let cx = cols / 2;
             for y in (cy - 10)..(cy + 10) {
                 for x in (cx - 10)..(cx + 10) {
                     let idx = ((y as usize) * cols as usize + x as usize) * 3;
-                    data[idx] = 0; // B
-                    data[idx + 1] = 0; // G
-                    data[idx + 2] = 255; // R
+                    data[idx] = bgr.0; // B
+                    data[idx + 1] = bgr.1; // G
+                    data[idx + 2] = bgr.2; // R
                 }
             }
         }
         mat
     }
 
-    #[test]
-    fn test_extract_seal_mask_detects_red_seal() {
-        let src = make_page_with_seal(200, 200);
-        let mask = extract_seal_mask(&src).unwrap();
+    /// Проверяет, что печать заданного цвета обнаружена в маске.
+    fn assert_seal_detected(src: &Mat) {
+        let mask = extract_seal_mask(src).unwrap();
         assert!(!mask.empty(), "печать должна быть обнаружена");
         assert_eq!(mask.channels(), 1);
         assert!(count_nonzero_u8(&mask) > 0, "в маске должны быть пиксели печати");
+    }
+
+    #[test]
+    fn test_extract_seal_mask_detects_red_seal() {
+        // Красное пятно (BGR = 0,0,255)
+        assert_seal_detected(&make_page_with_seal(200, 200, (0, 0, 255)));
+    }
+
+    #[test]
+    fn test_extract_seal_mask_detects_blue_seal() {
+        // Синее пятно (BGR = 255,0,0) — преобладающий цвет чернил
+        assert_seal_detected(&make_page_with_seal(200, 200, (255, 0, 0)));
+    }
+
+    #[test]
+    fn test_extract_seal_mask_detects_purple_seal() {
+        // Фиолетовое пятно (BGR = 255,0,255)
+        assert_seal_detected(&make_page_with_seal(200, 200, (255, 0, 255)));
     }
 
     #[test]
