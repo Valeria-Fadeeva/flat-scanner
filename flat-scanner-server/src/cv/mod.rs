@@ -3,6 +3,7 @@ pub mod binarization;
 pub mod calibration;
 pub mod ccitt_encoder;
 pub mod profile_filtering;
+pub mod seal_extraction;
 pub mod segmentation;
 pub mod warping;
 
@@ -12,6 +13,7 @@ pub use segmentation::{CustomPoint, PageVertices, process_book_contours, segment
 pub use warping::{dewarp_spine, perspective_warp};
 pub use ccitt_encoder::encode_ccitt_g4_to_file;
 pub use profile_filtering::{apply_profile, ProcessingProfile};
+pub use seal_extraction::{extract_seal_mask, overlay_seal_on_text};
 
 /// Полная коррекция страницы: перспективная трансформация + деварпинг корешка.
 pub fn rectify_and_dewarp_page(src: &Mat, vertices: &PageVertices, target_width: u32, target_height: u32) -> Result<Mat, String> {

@@ -56,12 +56,15 @@
 - **Файлы:** `lib/presentation/scan_editor_page.dart`, `lib/data/theme_service.dart`
 - **Статус:** flutter analyze OK, flutter build linux --release OK
 
-### C4. CustomPainter интерактивной сетки (отложено)
-- [ ] Реализовать ScanEditorPainter с Drag-and-Drop вершин
-- [ ] Добавить Draggable Point с UX-кольцами подсветки
-- [ ] Интегрировать GestureDetector.onPanUpdate
-- [ ] Отправка PATCH запросов к Axum API для корректировки вершин
-- **Статус:** Отложено — базовый UI готов, интерактивная корректировка вершин на следующий этап
+### C4. CustomPainter интерактивной сетки ✅ ЗАВЕРШЕНО
+- [x] Реализовать VertexEditor (CustomPainter) с Drag-and-Drop вершин
+- [x] Добавить Draggable Point с UX-кольцами подсветки (активная вершина — оранжевая, увеличенная)
+- [x] Интегрировать GestureDetector.onPanStart/onPanUpdate/onPanEnd
+- [x] Отправка PATCH запросов к Axum API для корректировки вершин (adjust-vertex, G2)
+- [x] ApiService вынесен в RepositoryProvider (main.dart), доступен виджетам
+- **Файл:** `flat-scanner-client-flutter/lib/presentation/vertex_editor.dart`
+- **Статус:** Реализовано, подключено в `_ScanResultCard` (scan_editor_page.dart), flutter analyze OK
+- **Зависимость:** G2 (endpoint adjust-vertex)
 
 ---
 
@@ -133,9 +136,21 @@
 
 ---
 
-## Дополнительные задачи
+## Этап G: Сохранение печатей и разборка PDF (HIGH)
 
-### M7. Модуль разборки сторонних PDF
+### G3. Сохранение печатей и штампов (YCbCr) ✅ ЗАВЕРШЕНО
+- [x] Создать модуль seal_extraction.rs
+- [x] Извлечение маски печати из канала Cr (YCbCr) с инверсией
+- [x] Порог Otsu + морфологическая очистка (открытие/закрытие)
+- [x] Порог площади (MIN_SEAL_AREA_RATIO) для отсечения шума бумаги
+- [x] overlay_seal_on_text: принудительная чёрная заливка пикселей печати
+- [x] Интеграция в apply_profile (TextBw1bit) — печать сохраняется в 1-битном растре
+- [x] 4 unit-теста (детекция красной печати, grayscale-noop, overlay, empty-mask)
+- **Файл:** `src/cv/seal_extraction.rs`
+- **Статус:** Реализовано, интегрировано, cargo check + cargo test OK (44 теста)
+- **Зависимость:** E2 (profile_filtering), E1 (ccitt_encoder)
+
+### G4. Разборка сторонних PDF
 - [ ] Создать модуль pdf_importer.rs
 - [ ] Подключить крейт pdf-extract/poppler или pdftoppm
 - [ ] Реализовать:
@@ -144,6 +159,15 @@
   - Точечную замену дефектных листов
   - Сборку обновлённого PDF
 - **Файл:** `src/pdf_importer.rs`
+
+### G5. Сборка финального PDF из CCITT G4
+- [ ] Собрать финальный PDF из CCITT G4 TIFF-страниц
+- [ ] Сохранить метаданные (название книги, страницы)
+- **Файл:** `src/pdf_exporter.rs`
+
+---
+
+## Дополнительные задачи
 
 ### M8. Пакетная калибровка порогов Sauvola ✅ ЗАВЕРШЕНО
 - [x] Реализовать hot-reload параметра k_factor (отслеживание mtime файла)

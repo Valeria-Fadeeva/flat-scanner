@@ -38,8 +38,11 @@ class FlatScannerApp extends StatelessWidget {
 
     return MultiBlocProvider(
       providers: [
+        RepositoryProvider<ApiService>(
+          create: (_) => ApiService(),
+        ),
         BlocProvider(
-          create: (_) => ScannerBloc(ApiService()),
+          create: (context) => ScannerBloc(context.read<ApiService>()),
         ),
       ],
       child: MaterialApp(

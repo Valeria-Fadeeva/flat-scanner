@@ -16,6 +16,7 @@ use opencv::{
 use serde::{Deserialize, Serialize};
 
 use super::binarization::apply_sauvola_threshold;
+use super::seal_extraction::{extract_seal_mask, overlay_seal_on_text};
 
 /// Профиль обработки страницы.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,7 +76,14 @@ pub fn apply_profile(
             let mut inverted = Mat::default();
             core::bitwise_not(&binary, &mut inverted, &Mat::default())
                 .map_err(|e| e.to_string())?;
-            Ok(inverted)
+
+            // G3 (M5): сохранение печатей/штампов. Извлекаем маску
+            // синей/красной печати из исходного цветного кадра и налагаем
+            // её поверх текстового слоя, чтобы чернила не были стёрты
+            // Sauvola-бинаризацией. Для grayscale-входа маска пустая —
+            // слой возвращается без изменений.
+            let seal_mask = extract_seal_mask(src)?;
+            overlay_seal_on_text(&inverted, &seal_mask)
         }
         ProcessingProfile::IllustrationGrayscale8bit => {
             // Grayscale

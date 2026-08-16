@@ -88,6 +88,32 @@ class ApiService {
     return CalibrationParams.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
   }
 
+  /// G2: Корректировка вершины страницы (drag-and-drop).
+  ///
+  /// [uuid] — UUID книги, [index] — индекс вершины (0–3),
+  /// [x]/[y] — новые координаты, [page] — 'left' или 'right'.
+  Future<AdjustVertexResponse> adjustVertex({
+    required String uuid,
+    required int index,
+    required int x,
+    required int y,
+    required String page,
+  }) async {
+    final uri = Uri.parse('$_baseUrl/api/v1/scan/$uuid/adjust-vertex')
+        .replace(queryParameters: {
+          'index': index.toString(),
+          'x': x.toString(),
+          'y': y.toString(),
+          'page': page,
+        });
+
+    final res = await _client.patch(uri);
+    if (res.statusCode != 200) {
+      throw ApiException(res.statusCode, res.body);
+    }
+    return AdjustVertexResponse.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
+  }
+
   void dispose() => _client.close();
 }
 
@@ -117,6 +143,26 @@ class CalibrationParams {
         'window_size': windowSize,
         'profile': profile,
       };
+}
+
+/// G2: Ответ корректировки вершины.
+class AdjustVertexResponse {
+  final Map<String, dynamic> vertices;
+  final int index;
+  final String page;
+
+  AdjustVertexResponse({
+    required this.vertices,
+    required this.index,
+    required this.page,
+  });
+
+  factory AdjustVertexResponse.fromJson(Map<String, dynamic> json) =>
+      AdjustVertexResponse(
+        vertices: json['vertices'] as Map<String, dynamic>,
+        index: json['index'] as int,
+        page: json['page'] as String,
+      );
 }
 
 /// Ошибка HTTP-запроса к серверу.

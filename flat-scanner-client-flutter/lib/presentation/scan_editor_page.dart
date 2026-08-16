@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../data/api_service.dart';
 import '../data/models.dart';
 import '../domain/scanner_bloc.dart';
+import 'vertex_editor.dart';
 
 /// Главный экран редактора сканирования.
 ///
@@ -128,15 +130,29 @@ class _ScanEditorPageState extends State<ScanEditorPage> {
   }
 }
 
-/// Карточка результата: вершины + время обработки.
-class _ScanResultCard extends StatelessWidget {
+/// Карточка результата: вершины + время обработки + drag-and-drop редактор.
+class _ScanResultCard extends StatefulWidget {
   final ScanResponse response;
   const _ScanResultCard({required this.response});
 
   @override
+  State<_ScanResultCard> createState() => _ScanResultCardState();
+}
+
+class _ScanResultCardState extends State<_ScanResultCard> {
+  /// Текущие вершины (обновляются при drag-and-drop).
+  late PageVertices _vertices;
+
+  @override
+  void initState() {
+    super.initState();
+    _vertices = widget.response.vertices;
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final vertices = response.vertices.vertices;
+    final api = context.read<ApiService>();
 
     return Card(
       child: Padding(
@@ -153,12 +169,58 @@ class _ScanResultCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 12),
-            Text('UUID: ${response.uuid}'),
-            Text('Время обработки: ${response.executionTimeMs} мс'),
+            Text('UUID: ${widget.response.uuid}'),
+            Text('Время обработки: ${widget.response.executionTimeMs} мс'),
+            const SizedBox(height: 16),
+
+            // G6: Drag-and-Drop редактор вершин
+            Text('Корректировка вершин (перетащите маркеры):',
+                style: theme.textTheme.titleSmall),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 200,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: VertexEditor(
+                      uuid: widget.response.uuid,
+                      vertices: _vertices,
+                      page: 'left',
+                      api: api,
+                      onChanged: (v, idx) {
+                        setState(() {
+                          final list = List<PageVertex>.from(_vertices.vertices);
+                          list[idx] = v;
+                          _vertices = PageVertices(vertices: list);
+                        });
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: VertexEditor(
+                      uuid: widget.response.uuid,
+                      vertices: _vertices,
+                      page: 'right',
+                      api: api,
+                      onChanged: (v, idx) {
+                        setState(() {
+                          final list = List<PageVertex>.from(_vertices.vertices);
+                          list[idx] = v;
+                          _vertices = PageVertices(vertices: list);
+                        });
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
             const SizedBox(height: 12),
+
+            // Текстовое отображение вершин
             Text('Вершины страницы:', style: theme.textTheme.titleSmall),
             const SizedBox(height: 4),
-            ...vertices.asMap().entries.map((e) => Padding(
+            ..._vertices.vertices.asMap().entries.map((e) => Padding(
                   padding: const EdgeInsets.only(left: 8),
                   child: Text(
                     'Угол ${e.key + 1}: (${e.value.x.toStringAsFixed(1)}, '

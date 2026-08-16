@@ -1,7 +1,8 @@
 use axum::{
     Json, Router,
+    extract::Query,
     http::StatusCode,
-    routing::{get, post},
+    routing::{get, patch, post},
 };
 
 use clap::Parser;
@@ -140,6 +141,7 @@ async fn main() -> Result<(), String> {
         .route("/api/v1/scanner/process", post(process_scan_frame))
         .route("/api/v1/calibration", get(get_calibration))
         .route("/api/v1/calibration", post(update_calibration))
+        .route("/api/v1/scan/{uuid}/adjust-vertex", patch(adjust_vertex))
         .layer(cors);
 
     let addr: SocketAddr = cfg.bind_addr().parse().unwrap();
@@ -188,6 +190,148 @@ async fn update_calibration(
             Json(serde_json::json!({"error": e})),
         )),
     }
+}
+
+// --- БЛОК ОБРАБОТЧИКОВ КОРРЕКЦИИ ВЕРШИН (G2) ---
+
+/// Запрос корректировки вершины (query params)
+#[derive(Deserialize)]
+struct AdjustVertexQuery {
+    /// Индекс вершины: 0–3 (p1–p4)
+    index: u8,
+    /// Новая координата X
+    x: i32,
+    /// Новая координата Y
+    y: i32,
+    /// Сторона: "left" или "right"
+    page: String,
+}
+
+/// Ответ корректировки вершины
+#[derive(Serialize)]
+struct AdjustVertexResponse {
+    /// Обновлённые вершины
+    vertices: cv::PageVertices,
+    /// Индекс обновлённой вершины
+    index: u8,
+    /// Сторона
+    page: String,
+}
+
+/// PATCH /api/v1/scan/{uuid}/adjust-vertex?index=N&x=X&y=Y&page=left|right
+///
+/// Корректирует одну вершину страницы в последней записи спреда книги.
+async fn adjust_vertex(
+    axum::extract::Path(uuid): axum::extract::Path<String>,
+    Query(q): Query<AdjustVertexQuery>,
+) -> Result<Json<AdjustVertexResponse>, (StatusCode, Json<serde_json::Value>)> {
+    // Валидация index
+    if q.index > 3 {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({"error": "index must be 0-3"})),
+        ));
+    }
+
+    // Валидация page
+    if q.page != "left" && q.page != "right" {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({"error": "page must be 'left' or 'right'"})),
+        ));
+    }
+
+    // Получаем последнюю запись спреда
+    let store = session_store::global_session_store("./kanonissa.db");
+    let store = store.lock().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+    })?;
+
+    let spread = store
+        .get_last_spread(&uuid)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e})),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "No spread found for this book"})),
+            )
+        })?;
+
+    // Определяем, какие вершины обновляем
+    let vertices_json = if q.page == "left" {
+        spread.left_vertices.clone()
+    } else {
+        spread.right_vertices.clone()
+    };
+
+    let mut vertices: cv::PageVertices = vertices_json
+        .as_ref()
+        .and_then(|j| serde_json::from_str(j).ok())
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "Vertices not found for this spread"})),
+            )
+        })?;
+
+    // Обновляем вершину
+    let point = cv::CustomPoint { x: q.x, y: q.y };
+    match q.index {
+        0 => vertices.p1 = point,
+        1 => vertices.p2 = point,
+        2 => vertices.p3 = point,
+        3 => vertices.p4 = point,
+        _ => unreachable!(),
+    }
+
+    // Сериализуем обратно
+    let new_vertices_json = serde_json::to_string(&vertices)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+        })?;
+
+    // Сохраняем в БД (обновляем нужную сторону)
+    let left_v = if q.page == "left" {
+        &new_vertices_json
+    } else {
+        spread.left_vertices.as_deref().unwrap_or("{}")
+    };
+    let right_v = if q.page == "right" {
+        &new_vertices_json
+    } else {
+        spread.right_vertices.as_deref().unwrap_or("{}")
+    };
+
+    store
+        .update_spread_vertices(spread.id, left_v, right_v)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e})),
+            )
+        })?;
+
+    println!(
+        "[📐 ADJUST VERTEX]: UUID={}, page={}, index={}, new=({}, {})",
+        uuid, q.page, q.index, q.x, q.y
+    );
+
+    Ok(Json(AdjustVertexResponse {
+        vertices,
+        index: q.index,
+        page: q.page,
+    }))
 }
 
 // --- БЛОК ЛОКАЛЬНОГО CLI ПАЙПЛАЙНА ---
@@ -440,4 +584,60 @@ async fn process_scan_frame(
         vertices,
         execution_time_ms: start_time.elapsed().as_millis(),
     }))
+}
+
+// --- ТЕСТЫ G2: adjust-vertex ---
+#[cfg(test)]
+mod tests_adjust_vertex {
+    use super::*;
+
+    #[test]
+    fn test_adjust_vertex_query_deserialize() {
+        let json = r#"{"index": 2, "x": 100, "y": 200, "page": "left"}"#;
+        let q: AdjustVertexQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(q.index, 2);
+        assert_eq!(q.x, 100);
+        assert_eq!(q.y, 200);
+        assert_eq!(q.page, "left");
+    }
+
+    #[test]
+    fn test_adjust_vertex_response_serialize() {
+        let resp = AdjustVertexResponse {
+            vertices: cv::PageVertices {
+                p1: cv::CustomPoint { x: 10, y: 20 },
+                p2: cv::CustomPoint { x: 30, y: 40 },
+                p3: cv::CustomPoint { x: 50, y: 60 },
+                p4: cv::CustomPoint { x: 70, y: 80 },
+            },
+            index: 1,
+            page: "right".to_string(),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"index\":1"));
+        assert!(json.contains("\"page\":\"right\""));
+    }
+
+    #[test]
+    fn test_adjust_vertex_updates_correct_point() {
+        let mut vertices = cv::PageVertices {
+            p1: cv::CustomPoint { x: 0, y: 0 },
+            p2: cv::CustomPoint { x: 100, y: 0 },
+            p3: cv::CustomPoint { x: 100, y: 200 },
+            p4: cv::CustomPoint { x: 0, y: 200 },
+        };
+
+        let point = cv::CustomPoint { x: 55, y: 66 };
+        match 1u8 {
+            0 => vertices.p1 = point,
+            1 => vertices.p2 = point,
+            2 => vertices.p3 = point,
+            3 => vertices.p4 = point,
+            _ => unreachable!(),
+        }
+
+        assert_eq!(vertices.p2.x, 55);
+        assert_eq!(vertices.p2.y, 66);
+        assert_eq!(vertices.p1.x, 0); // не изменена
+    }
 }
