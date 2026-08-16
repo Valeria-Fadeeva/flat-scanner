@@ -151,15 +151,19 @@
 - **Зависимость:** E2 (profile_filtering), E1 (ccitt_encoder)
 - **Замечание:** детекция по S-каналу HSV покрывает все цвета чернил независимо от оттенка; цветные иллюстрации/фото в кадре тоже попадают в маску (для TextBw1bit допустимо — сохраняются как чёрные чернила).
 
-### G4. Разборка сторонних PDF
-- [ ] Создать модуль pdf_importer.rs
-- [ ] Подключить крейт pdf-extract/poppler или pdftoppm
-- [ ] Реализовать:
-  - Открытие "чужих" PDF
-  - Декомпиляцию страниц в растровые слои
-  - Точечную замену дефектных листов
-  - Сборку обновлённого PDF
-- **Файл:** `src/pdf_importer.rs`
+### G4. Разборка сторонних PDF ✅ BACKEND ЗАВЕРШЁН
+- [x] Создать модуль pdf_importer.rs
+- [x] Подключить pdftoppm (poppler-utils) для растеризации + lopdf для структурных операций
+- [x] Реализовать:
+  - Открытие "чужих" PDF (`Document::load`)
+  - Декомпиляцию страниц в растровые слои (`pdftoppm -png -r <dpi>`)
+  - Точечную замену дефектных листов (`replace_page`)
+  - Вставку страниц (`insert_page`)
+  - Очистку от шума (`clean_page` через `apply_profile`)
+- [x] REST endpoints: `/api/v1/import-pdf`, `/api/v1/replace-pdf-page`, `/api/v1/insert-pdf-page`, `/api/v1/clean-pdf-page`
+- [x] 6 unit-тестов, cargo test — 55 passed
+- [ ] Flutter-клиент: методы `importPdf`/`replacePdfPage`/`insertPdfPage`/`cleanPdfPage` в `api_service.dart` + UI
+- **Файл:** `flat-scanner-server/src/pdf_importer.rs`
 
 ### G5. Сборка финального PDF из CCITT G4 ✅ ЗАВЕРШЕНО
 - [x] Собрать финальный PDF из CCITT G4 TIFF-страниц

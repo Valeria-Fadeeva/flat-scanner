@@ -19,6 +19,7 @@ mod config; // Конфигурация bind-адреса (host/port)
 mod cv;
 mod sane_core; // Подключаем наш новый аппаратный слой FFI
 mod pdf_exporter; // Сборка финального PDF из страниц (G5)
+mod pdf_importer; // Разборка сторонних PDF (G4)
 mod session_recovery; // Горячий рестарт сессии
 mod session_store; // Транзакционное хранение сессий сканирования
 
@@ -144,6 +145,10 @@ async fn main() -> Result<(), String> {
         .route("/api/v1/calibration", post(update_calibration))
         .route("/api/v1/scan/{uuid}/adjust-vertex", patch(adjust_vertex))
         .route("/api/v1/export-pdf", post(export_pdf))
+        .route("/api/v1/import-pdf", post(import_pdf))
+        .route("/api/v1/replace-pdf-page", post(replace_pdf_page))
+        .route("/api/v1/insert-pdf-page", post(insert_pdf_page))
+        .route("/api/v1/clean-pdf-page", post(clean_pdf_page))
         .layer(cors);
 
     let addr: SocketAddr = cfg.bind_addr().parse().unwrap();
@@ -471,6 +476,217 @@ async fn export_pdf(
         path: output_path,
         size_bytes: size,
         page_count: page_paths.len(),
+    }))
+}
+
+// --- БЛОК РАЗБОРКИ PDF (G4) ---
+
+/// Запрос импорта PDF
+#[derive(Debug, Deserialize)]
+struct ImportPdfRequest {
+    /// Путь к входному PDF
+    input_pdf: String,
+    /// Каталог для PNG-страниц (опционально, по умолчанию ./import/<hash>)
+    #[serde(default)]
+    output_dir: Option<String>,
+    /// DPI растеризации (по умолчанию 300)
+    #[serde(default = "default_dpi")]
+    dpi: u32,
+}
+
+fn default_dpi() -> u32 {
+    300
+}
+
+/// Ответ импорта PDF
+#[derive(Debug, Serialize)]
+struct ImportPdfResponse {
+    /// Пути к экспортированным PNG-страницам
+    pages: Vec<String>,
+    /// Количество страниц
+    page_count: usize,
+}
+
+/// Запрос замены страницы
+#[derive(Debug, Deserialize)]
+struct ReplacePdfPageRequest {
+    input_pdf: String,
+    page_index: usize,
+    replacement_image: String,
+    #[serde(default)]
+    output_pdf: Option<String>,
+}
+
+/// Запрос вставки страницы
+#[derive(Debug, Deserialize)]
+struct InsertPdfPageRequest {
+    input_pdf: String,
+    /// Индекс после которого вставить (-1 = в начало)
+    after_index: i64,
+    image_path: String,
+    #[serde(default)]
+    output_pdf: Option<String>,
+}
+
+/// Запрос очистки страницы
+#[derive(Debug, Deserialize)]
+struct CleanPdfPageRequest {
+    image_path: String,
+    /// Профиль: text_bw_1bit | illustration_grayscale_8bit | color_rgb_24bit
+    profile: String,
+    #[serde(default = "default_k_factor")]
+    k_factor: f32,
+    #[serde(default = "default_window_size")]
+    window_size: i32,
+}
+
+fn default_k_factor() -> f32 {
+    0.2
+}
+
+fn default_window_size() -> i32 {
+    15
+}
+
+/// Ответ операции с PDF
+#[derive(Debug, Serialize)]
+struct PdfOperationResponse {
+    path: String,
+    size_bytes: usize,
+}
+
+/// POST /api/v1/import-pdf — экспортирует страницы PDF как PNG.
+async fn import_pdf(
+    Json(payload): Json<ImportPdfRequest>,
+) -> Result<Json<ImportPdfResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let output_dir = match &payload.output_dir {
+        Some(d) if !d.is_empty() => d.clone(),
+        _ => "./import".to_string(),
+    };
+
+    let pages = pdf_importer::import_pdf_pages(&payload.input_pdf, &output_dir, payload.dpi)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e})),
+            )
+        })?;
+
+    println!(
+        "[📥 PDF IMPORT]: {} -> {} страниц @ {} DPI",
+        payload.input_pdf,
+        pages.len(),
+        payload.dpi
+    );
+
+    Ok(Json(ImportPdfResponse {
+        page_count: pages.len(),
+        pages,
+    }))
+}
+
+/// POST /api/v1/replace-pdf-page — заменяет страницу в PDF.
+async fn replace_pdf_page(
+    Json(payload): Json<ReplacePdfPageRequest>,
+) -> Result<Json<PdfOperationResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let output_pdf = match &payload.output_pdf {
+        Some(p) if !p.is_empty() => p.clone(),
+        _ => format!("{}.replaced.pdf", payload.input_pdf),
+    };
+
+    let size = pdf_importer::replace_page(
+        &payload.input_pdf,
+        payload.page_index,
+        &payload.replacement_image,
+        &output_pdf,
+    )
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e})),
+        )
+    })?;
+
+    println!(
+        "[✏️ PDF REPLACE]: page {} -> {} ({} KB)",
+        payload.page_index,
+        output_pdf,
+        size / 1024
+    );
+
+    Ok(Json(PdfOperationResponse {
+        path: output_pdf,
+        size_bytes: size,
+    }))
+}
+
+/// POST /api/v1/insert-pdf-page — вставляет страницу в PDF.
+async fn insert_pdf_page(
+    Json(payload): Json<InsertPdfPageRequest>,
+) -> Result<Json<PdfOperationResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let output_pdf = match &payload.output_pdf {
+        Some(p) if !p.is_empty() => p.clone(),
+        _ => format!("{}.inserted.pdf", payload.input_pdf),
+    };
+
+    let size = pdf_importer::insert_page(
+        &payload.input_pdf,
+        payload.after_index,
+        &payload.image_path,
+        &output_pdf,
+    )
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e})),
+        )
+    })?;
+
+    println!(
+        "[➕ PDF INSERT]: after {} -> {} ({} KB)",
+        payload.after_index,
+        output_pdf,
+        size / 1024
+    );
+
+    Ok(Json(PdfOperationResponse {
+        path: output_pdf,
+        size_bytes: size,
+    }))
+}
+
+/// POST /api/v1/clean-pdf-page — очищает страницу от шума.
+async fn clean_pdf_page(
+    Json(payload): Json<CleanPdfPageRequest>,
+) -> Result<Json<PdfOperationResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let cleaned_path = pdf_importer::clean_page(
+        &payload.image_path,
+        &payload.profile,
+        payload.k_factor,
+        payload.window_size,
+    )
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e})),
+        )
+    })?;
+
+    let size = std::fs::metadata(&cleaned_path)
+        .map(|m| m.len() as usize)
+        .unwrap_or(0);
+
+    println!(
+        "[🧹 PDF CLEAN]: {} -> {} ({} KB, profile={})",
+        payload.image_path,
+        cleaned_path,
+        size / 1024,
+        payload.profile
+    );
+
+    Ok(Json(PdfOperationResponse {
+        path: cleaned_path,
+        size_bytes: size,
     }))
 }
 
