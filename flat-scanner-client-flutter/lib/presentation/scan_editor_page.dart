@@ -13,6 +13,7 @@ import 'vertex_editor.dart';
 /// - выбор профиля обработки (1-бит / grayscale / color);
 /// - кнопку «Сканировать разворот»;
 /// - отображение вершин страницы (4 угла) после обработки;
+/// - кнопку экспорта финального PDF (G5);
 /// - опциональный полноэкранный режим (F11 / кнопка).
 class ScanEditorPage extends StatefulWidget {
   const ScanEditorPage({super.key});
@@ -24,6 +25,12 @@ class ScanEditorPage extends StatefulWidget {
 class _ScanEditorPageState extends State<ScanEditorPage> {
   ScanProfile _profile = ScanProfile.textBw1bit;
 
+  /// UUID последней успешно обработанной книги (для экспорта PDF).
+  String? _lastUuid;
+
+  /// Флаг: идёт экспорт PDF.
+  bool _exporting = false;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -32,6 +39,11 @@ class _ScanEditorPageState extends State<ScanEditorPage> {
       appBar: AppBar(
         title: const Text('Flat Scanner — редактор сканирования'),
         actions: [
+          IconButton(
+            tooltip: 'Экспортировать PDF',
+            icon: const Icon(Icons.picture_as_pdf),
+            onPressed: _lastUuid == null || _exporting ? null : _exportPdf,
+          ),
           IconButton(
             tooltip: 'Полноэкранный режим (F11)',
             icon: const Icon(Icons.fullscreen),
@@ -104,6 +116,7 @@ class _ScanEditorPageState extends State<ScanEditorPage> {
               child: BlocBuilder<ScannerBloc, ScannerState>(
                 builder: (context, state) {
                   if (state is ScanSuccess) {
+                    _lastUuid = state.response.uuid;
                     return _ScanResultCard(response: state.response);
                   }
                   if (state is ScanError) {
@@ -127,6 +140,34 @@ class _ScanEditorPageState extends State<ScanEditorPage> {
   Future<void> _toggleFullscreen() async {
     final isFullScreen = await windowManager.isFullScreen();
     await windowManager.setFullScreen(!isFullScreen);
+  }
+
+  /// G5: Экспорт финального PDF из всех страниц книги.
+  Future<void> _exportPdf() async {
+    final uuid = _lastUuid;
+    if (uuid == null) return;
+
+    setState(() => _exporting = true);
+    try {
+      final api = context.read<ApiService>();
+      final res = await api.exportPdf(uuid: uuid);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'PDF сохранён: ${res.path} (${res.pageCount} стр., '
+            '${(res.sizeBytes / 1024).toStringAsFixed(0)} KB)',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Ошибка экспорта PDF: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
   }
 }
 

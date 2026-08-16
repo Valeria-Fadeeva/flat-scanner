@@ -1,7 +1,7 @@
 # TODO — Задачи на доработку проекта «Канонисса-Библиотека»
 
 **Дата создания:** 14 августа 2026 г.  
-**Дата актуализации:** 16 августа 2026 г.  
+**Дата актуализации:** 17 августа 2026 г.  
 **Исходник:** TECH_SPEC.md (разделы 10–12)
 
 ---
@@ -161,10 +161,15 @@
   - Сборку обновлённого PDF
 - **Файл:** `src/pdf_importer.rs`
 
-### G5. Сборка финального PDF из CCITT G4
-- [ ] Собрать финальный PDF из CCITT G4 TIFF-страниц
-- [ ] Сохранить метаданные (название книги, страницы)
-- **Файл:** `src/pdf_exporter.rs`
+### G5. Сборка финального PDF из CCITT G4 ✅ ЗАВЕРШЕНО
+- [x] Собрать финальный PDF из CCITT G4 TIFF-страниц
+- [x] Сохранить метаданные (название книги, страницы)
+- [x] REST endpoint `POST /api/v1/export-pdf` (uuid + опциональный output_path)
+- [x] Flutter: метод `exportPdf` в `api_service.dart` + кнопка «Экспортировать PDF»
+- **Файл:** `flat-scanner-server/src/pdf_exporter.rs`
+- **Статус:** Реализовано, интегрировано, cargo build + cargo test OK (49 тестов), flutter analyze OK
+- **Зависимость:** E1 (ccitt_encoder), D1 (session_store)
+- **Замечание:** блокирующий вызов `assemble_pdf_from_tiff_pages` выполняется напрямую в async-хендлере (без `spawn_blocking`) — для локального инструмента блокировка event loop допустима, это обходит проблему не-Send future из-за `std::sync::MutexGuard`.
 
 ---
 

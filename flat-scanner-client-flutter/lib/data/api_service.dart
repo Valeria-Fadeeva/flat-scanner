@@ -114,7 +114,45 @@ class ApiService {
     return AdjustVertexResponse.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
   }
 
+  /// G5: Экспорт финального PDF из всех страниц книги.
+  ///
+  /// [uuid] — UUID книги. Сервер собирает PDF из сохранённых страниц
+  /// и возвращает путь, размер и количество страниц.
+  Future<ExportPdfResponse> exportPdf({required String uuid}) async {
+    final res = await _client.post(
+      Uri.parse('$_baseUrl/api/v1/export-pdf'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'uuid': uuid}),
+    );
+    if (res.statusCode != 200) {
+      throw ApiException(res.statusCode, res.body);
+    }
+    return ExportPdfResponse.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
+  }
+
   void dispose() => _client.close();
+}
+
+/// G5: Ответ экспорта PDF.
+class ExportPdfResponse {
+  /// Путь к созданному PDF-файлу.
+  final String path;
+  /// Размер PDF в байтах.
+  final int sizeBytes;
+  /// Количество страниц.
+  final int pageCount;
+
+  ExportPdfResponse({
+    required this.path,
+    required this.sizeBytes,
+    required this.pageCount,
+  });
+
+  factory ExportPdfResponse.fromJson(Map<String, dynamic> json) => ExportPdfResponse(
+        path: json['path'] as String,
+        sizeBytes: json['size_bytes'] as int,
+        pageCount: json['page_count'] as int,
+      );
 }
 
 /// Параметры калибровки бинаризации Сауволы (G1).

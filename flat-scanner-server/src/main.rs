@@ -18,6 +18,7 @@ use tower_http::cors::{Any, CorsLayer};
 mod config; // Конфигурация bind-адреса (host/port)
 mod cv;
 mod sane_core; // Подключаем наш новый аппаратный слой FFI
+mod pdf_exporter; // Сборка финального PDF из страниц (G5)
 mod session_recovery; // Горячий рестарт сессии
 mod session_store; // Транзакционное хранение сессий сканирования
 
@@ -142,6 +143,7 @@ async fn main() -> Result<(), String> {
         .route("/api/v1/calibration", get(get_calibration))
         .route("/api/v1/calibration", post(update_calibration))
         .route("/api/v1/scan/{uuid}/adjust-vertex", patch(adjust_vertex))
+        .route("/api/v1/export-pdf", post(export_pdf))
         .layer(cors);
 
     let addr: SocketAddr = cfg.bind_addr().parse().unwrap();
@@ -331,6 +333,144 @@ async fn adjust_vertex(
         vertices,
         index: q.index,
         page: q.page,
+    }))
+}
+
+// --- БЛОК ЭКСПОРТА PDF (G5) ---
+
+/// Запрос экспорта PDF
+#[derive(Debug, Deserialize)]
+struct ExportPdfRequest {
+    /// UUID книги
+    uuid: String,
+    /// Путь к выходному PDF-файлу (опционально, по умолчанию ./export/<uuid>.pdf)
+    #[serde(default)]
+    output_path: Option<String>,
+}
+
+/// Ответ экспорта PDF
+#[derive(Debug, Serialize)]
+struct ExportPdfResponse {
+    /// Путь к созданному PDF
+    path: String,
+    /// Размер PDF в байтах
+    size_bytes: usize,
+    /// Количество страниц
+    page_count: usize,
+}
+
+/// POST /api/v1/export-pdf — собирает финальный PDF из всех страниц книги.
+///
+/// Страницы берутся из SessionStore (spreads, по spread_index ASC),
+/// для каждого разворота — сначала левая, затем правая страница.
+async fn export_pdf(
+    Json(payload): Json<ExportPdfRequest>,
+) -> Result<Json<ExportPdfResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let store = session_store::global_session_store("./kanonissa.db");
+    let store = store.lock().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+    })?;
+
+    // Название книги для метаданных PDF
+    let book = store
+        .get_book(&payload.uuid)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e})),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "Book not found"})),
+            )
+        })?;
+
+    // Все развороты книги по порядку
+    let spreads = store
+        .list_spreads(&payload.uuid)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e})),
+            )
+        })?;
+
+    // Собираем упорядоченный список страниц: левая, затем правая
+    let mut page_paths: Vec<String> = Vec::new();
+    for spread in &spreads {
+        if let Some(p) = &spread.left_path {
+            if !p.is_empty() {
+                page_paths.push(p.clone());
+            }
+        }
+        if let Some(p) = &spread.right_path {
+            if !p.is_empty() {
+                page_paths.push(p.clone());
+            }
+        }
+    }
+
+    if page_paths.is_empty() {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({"error": "No pages found for this book"})),
+        ));
+    }
+
+    // Освобождаем MutexGuard ДО блокирующего await: std::sync::MutexGuard
+    // не Send, удержание через await сделало бы future хендлера не-Send.
+    drop(store);
+
+    // Путь к выходному PDF
+    let output_path = match &payload.output_path {
+        Some(p) if !p.is_empty() => p.clone(),
+        _ => format!("./export/{}.pdf", payload.uuid),
+    };
+    if let Some(parent) = std::path::Path::new(&output_path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({"error": format!("mkdir: {}", e)})),
+                    )
+                })?;
+        }
+    }
+
+    let metadata = pdf_exporter::PdfMetadata {
+        title: book.name.clone(),
+        author: "Kanonissa Library".to_string(),
+        subject: "Digitized book pages".to_string(),
+    };
+
+    // Блокирующий вызов (imread + сжатие) — для локального инструмента
+    // блокировка event loop допустима, избегаем проблем с Send
+    let size = pdf_exporter::assemble_pdf_from_tiff_pages(&page_paths, &metadata, &output_path)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e})),
+            )
+        })?;
+
+    println!(
+        "[📄 PDF EXPORT]: UUID={}, {} страниц, {} KB -> {}",
+        payload.uuid,
+        page_paths.len(),
+        size / 1024,
+        output_path
+    );
+
+    Ok(Json(ExportPdfResponse {
+        path: output_path,
+        size_bytes: size,
+        page_count: page_paths.len(),
     }))
 }
 
