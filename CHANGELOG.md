@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+- **Release pipeline**: `release.sh` теперь публикует релиз через совместимый REST API (GitHub + Forgejo) и загружает два таргетированных архива (`v<ver>-server.tar.gz`, `v<ver>-client.tar.gz`) как assets, вместо полагания на автогенерированный GitHub-артефакт всего дерева. `archive/` добавлен в `.gitignore`.
+
+### Fixed
+- **Session Store**: `execute_pragma` теперь автоматически добавляет префикс `PRAGMA `, если строка не начинается с него. Исправлен syntax error при выполнении `wal_checkpoint(TRUNCATE)` в `session_recovery.rs`.
+
 ### Added
 - **G4 (Flutter)**: Экран разборки стороннего PDF (`lib/presentation/pdf_import_page.dart`) — растеризация страниц, замена/вставка/очистка страниц.
 - **G4 (Flutter)**: 4 метода в `ApiService` (`importPdf`, `replacePdfPage`, `insertPdfPage`, `cleanPdfPage`) + модели `ImportPdfResponse`, `PdfOperationResponse`.
