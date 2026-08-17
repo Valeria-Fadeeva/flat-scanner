@@ -1,4 +1,4 @@
-# Конфигурация Flat Scanner Server (Kanonissa Core Engine)
+# Конфигурация Flat Scanner Server (Core Engine)
 #
 # Приоритет источников:
 #   1. CLI-флаги (--host, --port) — высший приоритет

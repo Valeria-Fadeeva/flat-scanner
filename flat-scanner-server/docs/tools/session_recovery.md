@@ -60,7 +60,7 @@ use scan::session_recovery::SessionRecovery;
 use scan::session_store::global_session_store;
 
 fn main() {
-    let store = global_session_store("./kanonissa.db");
+    let store = global_session_store("./data.db");
     let recovery = SessionRecovery::new(None);
 
     // Восстановление при старте

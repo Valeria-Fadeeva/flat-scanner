@@ -1,18 +1,13 @@
-# PKGBUILD для Flat Scanner Client (Flutter, Linux x64).
-#
-# Сборка требует установленный Flutter SDK и зависимости GTK:
-#   libgtk-3-dev libnotify-dev libuuid-dev libxkbcommon-dev
-#
-# Установка:
-#   makepkg -si
+# Maintainer: Valeria Fadeeva <valeria.fadeeva.me@gmail.com>
+# Platform Infrastructure: Melawy Linux Automation
 
 pkgname=flat-scanner-client
 pkgver=0.1.0
 pkgrel=1
-pkgdesc="Flat-bed scanner client for Melawvy OS (Flutter)"
-arch=(x86_64)
-url="https://example.com/flat-scanner"
-license=(MIT)
+pkgdesc="Native flat-bed scanner client desktop UI for Melawy OS (Flutter)"
+arch=('x86_64')
+url="https://github.com/Valeria-Fadeeva/flat-scanner"
+license=('MIT')
 depends=(
   'glibc'
   'gtk3'
@@ -23,36 +18,46 @@ depends=(
 makedepends=(
   'flutter'
 )
+# Предотвращаем любые попытки strip или сжатия бинарников Flutter, так как это может сломать нативный AOT-код Dart
+options=('!strip' '!lto')
 source=(
-  "https://example.com/releases/${pkgname}-${pkgver}.tar.gz"
+  "${pkgname}-${pkgver}.tar.gz::https://github.com/Valeria-Fadeeva/flat-scanner/archive/refs/tags/v${pkgver}-client.tar.gz"
+  "${pkgname}.desktop"
 )
-sha256sums=('SKIP')
+sha256sums=('SKIP'
+            'SKIP')
 
 build() {
-  cd "${srcdir}/${pkgname}-${pkgver}"
+  cd "${srcdir}/${pkgname}-${pkgver}/flat-scanner-client-flutter"
+
+  # Гарантируем, что сборка под Linux десктоп активирована во внутреннем конфиге Flutter
+  flutter config --enable-linux-desktop
+
+  # Загрузка и кэширование Dart-пакетов (BLoC, Http, WindowManager)
   flutter pub get
+
+  # Нативная компиляция AOT-бинарника под Linux x64
   flutter build linux --release
 }
 
 package() {
-  cd "${srcdir}/${pkgname}-${pkgver}"
+  cd "${srcdir}/${pkgname}-${pkgver}/flat-scanner-client-flutter"
 
-  # Бинарник и ресурсы Flutter
-  install -Dm755 build/linux/x64/release/bundle/${pkgname} \
-    "${pkgdir}/usr/bin/${pkgname}"
+  local _destdir="${pkgdir}/usr/lib/${pkgname}"
+  install -d "${_destdir}"
 
-  # Ресурсы (data/, icudtl.dat и т.д.)
-  if [ -d build/linux/x64/release/bundle/data ]; then
-    install -Dm755 -d "${pkgdir}/usr/share/${pkgname}"
-    cp -r build/linux/x64/release/bundle/data \
-      "${pkgdir}/usr/share/${pkgname}/data"
-  fi
-  if [ -f build/linux/x64/release/bundle/icudtl.dat ]; then
-    install -Dm644 build/linux/x64/release/bundle/icudtl.dat \
-      "${pkgdir}/usr/share/${pkgname}/icudtl.dat"
-  fi
+  # Копируем весь bundle целиком (бинарник, либы .so, папки data/ и локализации)
+  # Это гарантирует, что динамический линкер Linux (ld.so) мгновенно найдет libflutter_linux_gtk.so
+  cp -r build/linux/x64/release/bundle/* "${_destdir}/"
 
-  # Desktop entry
-  install -Dm644 "${pkgname}.desktop" \
+  # Выставляем права на чтение и выполнение для главного исполняемого файла
+  chmod 755 "${_destdir}/${pkgname}"
+
+  # Создаем глобальный симлинк в /usr/bin/ для запуска приложения из любой точки системы
+  install -d "${pkgdir}/usr/bin"
+  ln -s "/usr/lib/${pkgname}/${pkgname}" "${pkgdir}/usr/bin/${pkgname}"
+
+  # Установка Desktop-файла интеграции в меню приложений XDG
+  install -Dm644 "${srcdir}/${pkgname}.desktop" \
     "${pkgdir}/usr/share/applications/${pkgname}.desktop"
 }

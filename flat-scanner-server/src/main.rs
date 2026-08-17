@@ -79,7 +79,7 @@ async fn main() -> Result<(), String> {
     let args = CliArgs::parse();
 
     // D1: Инициализация Session Store (SQLite)
-    let db_path = "./kanonissa.db";
+    let db_path = "./data.db";
     let session_store = session_store::global_session_store(db_path);
     println!("[💾 SESSION STORE]: Инициализирован SQLite на {}", db_path);
 
@@ -249,7 +249,7 @@ async fn adjust_vertex(
     }
 
     // Получаем последнюю запись спреда
-    let store = session_store::global_session_store("./kanonissa.db");
+    let store = session_store::global_session_store("./data.db");
     let store = store.lock().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -371,7 +371,7 @@ struct ExportPdfResponse {
 async fn export_pdf(
     Json(payload): Json<ExportPdfRequest>,
 ) -> Result<Json<ExportPdfResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let store = session_store::global_session_store("./kanonissa.db");
+    let store = session_store::global_session_store("./data.db");
     let store = store.lock().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -450,7 +450,7 @@ async fn export_pdf(
 
     let metadata = pdf_exporter::PdfMetadata {
         title: book.name.clone(),
-        author: "Kanonissa Library".to_string(),
+        author: "Valeria Fadeeva".to_string(),
         subject: "Digitized book pages".to_string(),
     };
 
@@ -791,7 +791,7 @@ fn run_cli_pipeline(args: CliArgs) -> Result<(), String> {
 async fn health_check() -> (StatusCode, &'static str) {
     (
         StatusCode::OK,
-        "{\"status\": \"Kanonissa Core Engine Online\"}",
+        "{\"status\": \"Core Engine Online\"}",
     )
 }
 

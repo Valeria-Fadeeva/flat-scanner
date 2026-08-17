@@ -1,44 +1,54 @@
-# PKGBUILD для Flat Scanner Server (Kanonissa Core Engine)
-# Сборка: makepkg -si
-# Установка: pacman -U flat-scanner-server-*.pkg.tar.zst
+# Maintainer: Valeria Fadeeva <valeria.fadeeva.me@gmail.com>
+# Architecture: Core Linux Automation Pipeline
 
 pkgname=flat-scanner-server
 pkgver=0.1.0
 pkgrel=1
-pkgdesc="Flat Scanner Core Engine (Kanonissa) — движок оцифровки книг без OCR"
+pkgdesc="High-performance, headless flatbed scanning core engine without OCR"
 arch=('x86_64')
-url="https://github.com/valeria-fadeeva/scan"
+url="https://github.com/Valeria-Fadeeva/flat-scanner"
 license=('MIT')
 depends=('opencv' 'sane' 'libtiff' 'sqlite' 'glibc')
 makedepends=('cargo' 'pkg-config')
-install=
-source=("$pkgname-$pkgver.tar.gz::https://github.com/valeria-fadeeva/scan/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('SKIP')
+backup=('etc/flat-scanner-server/config.toml')
+options=('!lto') # Предотвращаем конфликты, так как LTO уже жестко зашит в Cargo.toml
+source=("$pkgname-$pkgver.tar.gz::https://github.com/Valeria-Fadeeva/flat-scanner/archive/refs/tags/v$pkgver-server.tar.gz"
+        "flat-scanner-server.service")
+sha256sums=('SKIP'
+            'SKIP')
+
+prepare() {
+    cd "$srcdir/$pkgname-$pkgver/flat-scanner-server"
+    export CARGO_HOME="$srcdir/cargo-home"
+    cargo fetch --locked --target "$CARCH-unknown-linux-gnu"
+}
 
 build() {
-    cd "$pkgname-$pkgver/flat-scanner-server"
+    cd "$srcdir/$pkgname-$pkgver/flat-scanner-server"
+    export CARGO_HOME="$srcdir/cargo-home"
     cargo build --release --locked
 }
 
 package() {
-    cd "$pkgname-$pkgver/flat-scanner-server"
+    cd "$srcdir/$pkgname-$pkgver/flat-scanner-server"
 
-    # Бинарник
+    # 1. Системные исполняемые файлы
     install -Dm755 target/release/flat_scanner_server \
         "$pkgdir/usr/bin/flat_scanner_server"
 
-    # systemd service
-    install -Dm644 flat-scanner-server.service \
+    # 2. Интеграция в Систему Инициализации (Systemd Units)
+    install -Dm644 "$srcdir/flat-scanner-server.service" \
         "$pkgdir/usr/lib/systemd/system/flat-scanner-server.service"
 
-    # Каталог конфигурации
+    # 3. Конфигурационный слой Экосистемы
     install -Dm644 -d "$pkgdir/etc/flat-scanner-server"
     install -Dm644 config.example.toml \
         "$pkgdir/etc/flat-scanner-server/config.toml"
 
-    # Каталог работы (kanonissa.db, calibration.json, split/)
-    install -Dm755 -d "$pkgdir/var/lib/flat-scanner"
+    # 4. Государственное хранилище данных и горячий рестарт сессий
+    # Выставляем права 770, чтобы сервис мог писать данные автономно
+    install -Dm770 -d "$pkgdir/var/lib/flat-scanner"
 
-    # Документация
+    # 5. Сопутствующая документация ядра
     install -Dm644 README.md "$pkgdir/usr/share/doc/flat-scanner-server/README.md"
 }

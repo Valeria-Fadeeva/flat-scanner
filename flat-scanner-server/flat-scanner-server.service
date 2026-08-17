@@ -1,5 +1,5 @@
 [Unit]
-Description=Flat Scanner Core Engine (Kanonissa) — движок оцифровки книг
+Description=Flat Scanner Core Engine — движок оцифровки книг
 Documentation=file:///usr/share/doc/flat-scanner-server/README.md
 After=network.target
 Wants=network.target
@@ -10,7 +10,7 @@ Type=simple
 ExecStart=/usr/bin/flat_scanner_server
 # Конфигурация bind-адреса (host/port) — см. /etc/flat-scanner-server/config.toml
 Environment=FLAT_SCANNER_CONFIG=/etc/flat-scanner-server/config.toml
-# Каталог работы: kanonissa.db, calibration.json, split/
+# Каталог работы: data.db, calibration.json, split/
 WorkingDirectory=/var/lib/flat-scanner
 # Автоперезапуск при сбое (важно для hot-restart сессии)
 Restart=on-failure

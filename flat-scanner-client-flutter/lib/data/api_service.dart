@@ -13,11 +13,8 @@ class ApiService {
   final int port;
   final http.Client _client;
 
-  ApiService({
-    this.host = '127.0.0.1',
-    this.port = 8080,
-    http.Client? client,
-  }) : _client = client ?? http.Client();
+  ApiService({this.host = '127.0.0.1', this.port = 8080, http.Client? client})
+    : _client = client ?? http.Client();
 
   String get _baseUrl => 'http://$host:$port';
 
@@ -72,7 +69,9 @@ class ApiService {
     if (res.statusCode != 200) {
       throw ApiException(res.statusCode, res.body);
     }
-    return CalibrationParams.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
+    return CalibrationParams.fromJson(
+      jsonDecode(res.body) as Map<String, dynamic>,
+    );
   }
 
   /// G1: Обновить параметры калибровки (hot-reload на сервере).
@@ -85,7 +84,9 @@ class ApiService {
     if (res.statusCode != 200) {
       throw ApiException(res.statusCode, res.body);
     }
-    return CalibrationParams.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
+    return CalibrationParams.fromJson(
+      jsonDecode(res.body) as Map<String, dynamic>,
+    );
   }
 
   /// G2: Корректировка вершины страницы (drag-and-drop).
@@ -99,19 +100,22 @@ class ApiService {
     required int y,
     required String page,
   }) async {
-    final uri = Uri.parse('$_baseUrl/api/v1/scan/$uuid/adjust-vertex')
-        .replace(queryParameters: {
-          'index': index.toString(),
-          'x': x.toString(),
-          'y': y.toString(),
-          'page': page,
-        });
+    final uri = Uri.parse('$_baseUrl/api/v1/scan/$uuid/adjust-vertex').replace(
+      queryParameters: {
+        'index': index.toString(),
+        'x': x.toString(),
+        'y': y.toString(),
+        'page': page,
+      },
+    );
 
     final res = await _client.patch(uri);
     if (res.statusCode != 200) {
       throw ApiException(res.statusCode, res.body);
     }
-    return AdjustVertexResponse.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
+    return AdjustVertexResponse.fromJson(
+      jsonDecode(res.body) as Map<String, dynamic>,
+    );
   }
 
   /// G5: Экспорт финального PDF из всех страниц книги.
@@ -127,7 +131,9 @@ class ApiService {
     if (res.statusCode != 200) {
       throw ApiException(res.statusCode, res.body);
     }
-    return ExportPdfResponse.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
+    return ExportPdfResponse.fromJson(
+      jsonDecode(res.body) as Map<String, dynamic>,
+    );
   }
 
   /// G4: Разборка стороннего PDF — растеризация страниц в PNG.
@@ -144,13 +150,15 @@ class ApiService {
       body: jsonEncode({
         'input_pdf': inputPdf,
         'dpi': dpi,
-        if (outputDir != null) 'output_dir': outputDir,
+        'output_dir': ?outputDir,
       }),
     );
     if (res.statusCode != 200) {
       throw ApiException(res.statusCode, res.body);
     }
-    return ImportPdfResponse.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
+    return ImportPdfResponse.fromJson(
+      jsonDecode(res.body) as Map<String, dynamic>,
+    );
   }
 
   /// G4: Замена дефектной страницы в PDF.
@@ -169,13 +177,15 @@ class ApiService {
         'input_pdf': inputPdf,
         'page_index': pageIndex,
         'replacement_image': replacementImage,
-        if (outputPdf != null) 'output_pdf': outputPdf,
+        'output_pdf': ?outputPdf,
       }),
     );
     if (res.statusCode != 200) {
       throw ApiException(res.statusCode, res.body);
     }
-    return PdfOperationResponse.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
+    return PdfOperationResponse.fromJson(
+      jsonDecode(res.body) as Map<String, dynamic>,
+    );
   }
 
   /// G4: Вставка страницы в PDF.
@@ -194,13 +204,15 @@ class ApiService {
         'input_pdf': inputPdf,
         'after_index': afterIndex,
         'image_path': imagePath,
-        if (outputPdf != null) 'output_pdf': outputPdf,
+        'output_pdf': ?outputPdf,
       }),
     );
     if (res.statusCode != 200) {
       throw ApiException(res.statusCode, res.body);
     }
-    return PdfOperationResponse.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
+    return PdfOperationResponse.fromJson(
+      jsonDecode(res.body) as Map<String, dynamic>,
+    );
   }
 
   /// G4: Очистка страницы от шума (профилирование).
@@ -225,7 +237,9 @@ class ApiService {
     if (res.statusCode != 200) {
       throw ApiException(res.statusCode, res.body);
     }
-    return PdfOperationResponse.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
+    return PdfOperationResponse.fromJson(
+      jsonDecode(res.body) as Map<String, dynamic>,
+    );
   }
 
   void dispose() => _client.close();
@@ -235,12 +249,14 @@ class ApiService {
 class ImportPdfResponse {
   /// Пути к экспортированным PNG-страницам.
   final List<String> pages;
+
   /// Количество страниц.
   final int pageCount;
 
   ImportPdfResponse({required this.pages, required this.pageCount});
 
-  factory ImportPdfResponse.fromJson(Map<String, dynamic> json) => ImportPdfResponse(
+  factory ImportPdfResponse.fromJson(Map<String, dynamic> json) =>
+      ImportPdfResponse(
         pages: (json['pages'] as List).cast<String>(),
         pageCount: json['page_count'] as int,
       );
@@ -250,12 +266,14 @@ class ImportPdfResponse {
 class PdfOperationResponse {
   /// Путь к результату (PDF или очищенный PNG).
   final String path;
+
   /// Размер в байтах.
   final int sizeBytes;
 
   PdfOperationResponse({required this.path, required this.sizeBytes});
 
-  factory PdfOperationResponse.fromJson(Map<String, dynamic> json) => PdfOperationResponse(
+  factory PdfOperationResponse.fromJson(Map<String, dynamic> json) =>
+      PdfOperationResponse(
         path: json['path'] as String,
         sizeBytes: json['size_bytes'] as int,
       );
@@ -265,8 +283,10 @@ class PdfOperationResponse {
 class ExportPdfResponse {
   /// Путь к созданному PDF-файлу.
   final String path;
+
   /// Размер PDF в байтах.
   final int sizeBytes;
+
   /// Количество страниц.
   final int pageCount;
 
@@ -276,7 +296,8 @@ class ExportPdfResponse {
     required this.pageCount,
   });
 
-  factory ExportPdfResponse.fromJson(Map<String, dynamic> json) => ExportPdfResponse(
+  factory ExportPdfResponse.fromJson(Map<String, dynamic> json) =>
+      ExportPdfResponse(
         path: json['path'] as String,
         sizeBytes: json['size_bytes'] as int,
         pageCount: json['page_count'] as int,
@@ -287,8 +308,10 @@ class ExportPdfResponse {
 class CalibrationParams {
   /// Коэффициент Сауволы (0.1–0.5).
   final double kFactor;
+
   /// Размер окна Сауволы (нечётное, 11–51).
   final int windowSize;
+
   /// Профиль обработки: text_bw_1bit | illustration_grayscale_8bit | color_rgb_24bit.
   final String profile;
 
@@ -298,17 +321,18 @@ class CalibrationParams {
     this.profile = 'text_bw_1bit',
   });
 
-  factory CalibrationParams.fromJson(Map<String, dynamic> json) => CalibrationParams(
+  factory CalibrationParams.fromJson(Map<String, dynamic> json) =>
+      CalibrationParams(
         kFactor: (json['k_factor'] as num).toDouble(),
         windowSize: json['window_size'] as int,
         profile: json['profile'] as String,
       );
 
   Map<String, dynamic> toJson() => {
-        'k_factor': kFactor,
-        'window_size': windowSize,
-        'profile': profile,
-      };
+    'k_factor': kFactor,
+    'window_size': windowSize,
+    'profile': profile,
+  };
 }
 
 /// G2: Ответ корректировки вершины.
