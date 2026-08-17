@@ -756,8 +756,13 @@ impl SessionStore {
     /// # Возвращает
     /// `Result<(), String>` — успех или описание ошибки
     pub fn execute_pragma(&self, pragma: &str) -> Result<(), String> {
+        let sql = if pragma.to_uppercase().starts_with("PRAGMA") {
+            pragma.to_string()
+        } else {
+            format!("PRAGMA {}", pragma)
+        };
         self.conn
-            .execute_batch(pragma)
+            .execute_batch(&sql)
             .map_err(|e| format!("Ошибка выполнения PRAGMA '{}': {}", pragma, e))
     }
 
