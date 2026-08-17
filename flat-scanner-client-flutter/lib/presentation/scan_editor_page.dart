@@ -5,6 +5,7 @@ import 'package:window_manager/window_manager.dart';
 import '../data/api_service.dart';
 import '../data/models.dart';
 import '../domain/scanner_bloc.dart';
+import 'pdf_import_page.dart';
 import 'vertex_editor.dart';
 
 /// Главный экран редактора сканирования.
@@ -39,6 +40,13 @@ class _ScanEditorPageState extends State<ScanEditorPage> {
       appBar: AppBar(
         title: const Text('Flat Scanner — редактор сканирования'),
         actions: [
+          IconButton(
+            tooltip: 'Разборка стороннего PDF (G4)',
+            icon: const Icon(Icons.file_open),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const PdfImportPage()),
+            ),
+          ),
           IconButton(
             tooltip: 'Экспортировать PDF',
             icon: const Icon(Icons.picture_as_pdf),

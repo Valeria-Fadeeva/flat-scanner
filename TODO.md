@@ -162,7 +162,7 @@
   - Очистку от шума (`clean_page` через `apply_profile`)
 - [x] REST endpoints: `/api/v1/import-pdf`, `/api/v1/replace-pdf-page`, `/api/v1/insert-pdf-page`, `/api/v1/clean-pdf-page`
 - [x] 6 unit-тестов, cargo test — 55 passed
-- [ ] Flutter-клиент: методы `importPdf`/`replacePdfPage`/`insertPdfPage`/`cleanPdfPage` в `api_service.dart` + UI
+- [x] Flutter-клиент: методы `importPdf`/`replacePdfPage`/`insertPdfPage`/`cleanPdfPage` в `api_service.dart` + UI (`pdf_import_page.dart`, кнопка в AppBar `ScanEditorPage`)
 - **Файл:** `flat-scanner-server/src/pdf_importer.rs`
 
 ### G5. Сборка финального PDF из CCITT G4 ✅ ЗАВЕРШЕНО
