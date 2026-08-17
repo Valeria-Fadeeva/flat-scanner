@@ -1,3 +1,8 @@
+//     Flat Scanner Server - High-performance headless flatbed scanning
+//     core engine in Rust.
+//
+//     Copyright (C) 2026  Valeria Fadeeva <valeria.fadeeva.me@gmail.com>
+
 use axum::{
     Json, Router,
     extract::Query,

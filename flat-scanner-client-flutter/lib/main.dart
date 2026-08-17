@@ -1,3 +1,8 @@
+//     Flat Scanner Client - Native Linux desktop UI built with Flutter
+//     for the flat-scanner ecosystem.
+//
+//       Copyright (C) 2026  Valeria Fadeeva <valeria.fadeeva.me@gmail.com>
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:window_manager/window_manager.dart';
