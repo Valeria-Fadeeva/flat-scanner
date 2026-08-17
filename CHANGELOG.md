@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 ### Changed
-- **Release pipeline**: `release.sh` теперь публикует релиз через совместимый REST API (GitHub + Forgejo) и загружает два таргетированных архива (`v<ver>-server.tar.gz`, `v<ver>-client.tar.gz`) как assets, вместо полагания на автогенерированный GitHub-артефакт всего дерева. `archive/` добавлен в `.gitignore`.
+- **Release pipeline**: `release.sh` теперь публикует релиз через совместимый REST API (GitHub + Forgejo) и загружает два таргетированных архива (`v<ver>-server.tar.gz`, `v<ver>-client.tar.gz`) как assets, вместо полагания на автогенерированный GitHub-артефакт всего дерева. `archive/` добавлен в `.gitignore`. Перед упаковкой выполняется предварительная очистка артефактов сборки (`cargo clean` / `flutter clean` + удаление `target/`, `build/`, `.dart_tool/`), чтобы релизные архивы не содержали кэши компиляции.
 
 ### Fixed
 - **Session Store**: `execute_pragma` теперь автоматически добавляет префикс `PRAGMA `, если строка не начинается с него. Исправлен syntax error при выполнении `wal_checkpoint(TRUNCATE)` в `session_recovery.rs`.
