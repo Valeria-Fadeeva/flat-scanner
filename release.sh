@@ -26,6 +26,23 @@ CLIENT_TAR="$ARCHIVE_DIR/v$VERSION-client.tar.gz"
 echo "🧹 Очистка старых локальных архивов..."
 rm -f "$SERVER_TAR" "$CLIENT_TAR"
 
+# 2.1. Предварительная очистка артефактов сборки, чтобы они не попали в релизные архивы
+echo "🧼 Очистка артефактов сборки (cargo clean / flutter clean)..."
+if command -v cargo >/dev/null 2>&1; then
+    (cd flat-scanner-server && cargo clean) || echo "⚠️  cargo clean завершился с ошибкой, продолжаю"
+else
+    echo "⚠️  cargo не найден в PATH, пропускаю cargo clean"
+fi
+
+if command -v flutter >/dev/null 2>&1; then
+    (cd flat-scanner-client-flutter && flutter clean) || echo "⚠️  flutter clean завершился с ошибкой, продолжаю"
+else
+    echo "⚠️  flutter не найден в PATH, пропускаю flutter clean"
+fi
+# Дополнительно удаляем кэши/билды, которые могут остаться после clean
+rm -rf flat-scanner-server/target
+rm -rf flat-scanner-client-flutter/build flat-scanner-client-flutter/.dart_tool
+
 # 3. Сборка архива сервера (упаковываем ТОЛЬКО содержимое папки flat-scanner-server)
 echo "⚙️  Сборка артефакта сервера..."
 tar -czf "$SERVER_TAR" -C flat-scanner-server --transform "s?^\.?flat-scanner-server-$VERSION?" .
