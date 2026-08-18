@@ -6,6 +6,8 @@ use opencv::{
 };
 use serde::{Deserialize, Serialize};
 
+use super::DigitizationError;
+
 // Локальный аналог точки для безопасного маршалинга в JSON
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CustomPoint {
@@ -55,7 +57,7 @@ fn mask_candidate_score(contour: &Vector::<Point>, image_area: f64) -> f64 {
 ///   5. Морфологическое закрытие маски (заполнение провалов у ламп).
 ///   6. bitwise_and к исходному изображению.
 /// Возвращает очищенный кадр без ярких артефактов за пределами страницы.
-fn coarse_mask(src: &Mat) -> Result<Mat, String> {
+fn coarse_mask(src: &Mat) -> Result<Mat, DigitizationError> {
     let mut gray = Mat::default();
     if src.channels() > 1 {
         imgproc::cvt_color(
@@ -65,7 +67,7 @@ fn coarse_mask(src: &Mat) -> Result<Mat, String> {
             0,
             core::AlgorithmHint::ALGO_HINT_APPROX,
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
     } else {
         gray = src.clone();
     }
@@ -88,11 +90,11 @@ fn coarse_mask(src: &Mat) -> Result<Mat, String> {
             BORDER_DEFAULT,
             core::AlgorithmHint::ALGO_HINT_APPROX,
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
         let mut thresh = Mat::default();
         imgproc::threshold(&blurred, &mut thresh, 0.0, 255.0, imgproc::THRESH_BINARY_INV + imgproc::THRESH_OTSU)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
         let mut contours_vec = Vector::<Vector::<Point>>::new();
         imgproc::find_contours(
@@ -102,10 +104,10 @@ fn coarse_mask(src: &Mat) -> Result<Mat, String> {
             imgproc::CHAIN_APPROX_SIMPLE,
             Point::new(0, 0),
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
         for i in 0..contours_vec.len() {
-            let contour = contours_vec.get(i).map_err(|e| e.to_string())?;
+            let contour = contours_vec.get(i).map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
             let score = mask_candidate_score(&contour, image_area);
             if score > best_score {
                 best_score = score;
@@ -121,9 +123,9 @@ fn coarse_mask(src: &Mat) -> Result<Mat, String> {
 
     // Строим маску из лучшего кандидата
     let mut mask = Mat::zeros(src.rows(), src.cols(), core::CV_8UC1)
-        .map_err(|e| e.to_string())?
+        .map_err(|e| DigitizationError::OpenCv(e.to_string()))?
         .to_mat()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
     let mut single_contour = Vector::<Vector::<Point>>::new();
     single_contour.push(best_contour.clone());
@@ -139,7 +141,7 @@ fn coarse_mask(src: &Mat) -> Result<Mat, String> {
         0,
         Point::new(0, 0),
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
     // Морфологическое закрытие: заполняем провалы (тени ламп, складки)
     let close_kernel = imgproc::get_structuring_element(
@@ -147,7 +149,7 @@ fn coarse_mask(src: &Mat) -> Result<Mat, String> {
         Size::new(15, 15),
         Point::new(0, 0),
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
     let mut closed_mask = Mat::default();
     imgproc::morphology_ex(
         &mask,
@@ -159,11 +161,11 @@ fn coarse_mask(src: &Mat) -> Result<Mat, String> {
         BORDER_DEFAULT,
         core::Scalar::all(0.0),
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
     let mut result = Mat::default();
     core::bitwise_and(src, &closed_mask, &mut result, &Mat::default())
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
     Ok(result)
 }
@@ -183,7 +185,7 @@ fn isolate_side_artifacts(
     mask: &Mat,
     band_width: i32,
     erode_iters: i32,
-) -> Result<Mat, String> {
+) -> Result<Mat, DigitizationError> {
     let rows = mask.rows() as usize;
     let cols = mask.cols() as usize;
 
@@ -193,7 +195,7 @@ fn isolate_side_artifacts(
         Size::new(band_width, band_width),
         Point::new(0, 0),
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
     let mut eroded = Mat::default();
     imgproc::erode(
@@ -205,12 +207,12 @@ fn isolate_side_artifacts(
         BORDER_DEFAULT,
         core::Scalar::all(0.0),
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
     // Полоса = маска XOR эродированная маска
     let mut band = Mat::default();
     core::bitwise_xor(mask, &eroded, &mut band, &Mat::default())
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
     // 2. Анализируем полосу: считаем чередования по строкам
     let mut gray_band = Mat::default();
@@ -222,7 +224,7 @@ fn isolate_side_artifacts(
             0,
             core::AlgorithmHint::ALGO_HINT_APPROX,
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
     } else {
         gray_band = src.clone();
     }
@@ -268,7 +270,7 @@ fn isolate_side_artifacts(
             Size::new(3, 3),
             Point::new(0, 0),
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
         let mut result = mask.clone();
         for _ in 0..erode_iters {
@@ -282,7 +284,7 @@ fn isolate_side_artifacts(
                 BORDER_DEFAULT,
                 core::Scalar::all(0.0),
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
             result = eroded_iter;
         }
         return Ok(result);
@@ -300,7 +302,7 @@ fn isolate_side_artifacts(
 ///   5. Аппроксимация полигоном (approxPolyDP) до 4 точек.
 ///   6. Если не 4 точки → minAreaRect.
 ///   7. Сортировка вершин TL → TR → BR → BL.
-pub fn process_book_contours(src: &Mat) -> Result<PageVertices, String> {
+pub fn process_book_contours(src: &Mat) -> Result<PageVertices, DigitizationError> {
     // Coarse masking
     let masked = coarse_mask(src)?;
 
@@ -314,7 +316,7 @@ pub fn process_book_contours(src: &Mat) -> Result<PageVertices, String> {
             0,
             core::AlgorithmHint::ALGO_HINT_APPROX,
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
     } else {
         gray = masked.clone();
     }
@@ -322,7 +324,7 @@ pub fn process_book_contours(src: &Mat) -> Result<PageVertices, String> {
     // Бинаризация Otsu
     let mut thresh = Mat::default();
     imgproc::threshold(&gray, &mut thresh, 0.0, 255.0, imgproc::THRESH_BINARY_INV + imgproc::THRESH_OTSU)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
     // Поиск контуров
     let mut contours_vec = Vector::<Vector::<Point>>::new();
@@ -333,17 +335,19 @@ pub fn process_book_contours(src: &Mat) -> Result<PageVertices, String> {
         imgproc::CHAIN_APPROX_SIMPLE,
         Point::new(0, 0),
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
     if contours_vec.is_empty() {
-        return Err("Не обнаружено ни одного контура для детекции страницы".to_string());
+        return Err(DigitizationError::NoContourFound(
+            "Не обнаружено ни одного контура для детекции страницы".to_string(),
+        ));
     }
 
     // Самый большой контур по площади
     let mut max_area = 0.0_f64;
     let mut best_idx = 0_usize;
     for i in 0..contours_vec.len() {
-        let contour = contours_vec.get(i).map_err(|e| e.to_string())?;
+        let contour = contours_vec.get(i).map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
         let area = geometry::contour_area(&contour, false).unwrap_or(0.0);
         if area > max_area {
             max_area = area;
@@ -352,16 +356,19 @@ pub fn process_book_contours(src: &Mat) -> Result<PageVertices, String> {
     }
 
     if max_area < (src.rows() as f64 * src.cols() as f64 * 0.01) {
-        return Err(format!("Самый крупный контур слишком мал: {} px²", max_area));
+        return Err(DigitizationError::DegenerateContour(format!(
+            "Самый крупный контур слишком мал: {} px²",
+            max_area
+        )));
     }
 
-    let best_contour = contours_vec.get(best_idx).map_err(|e| e.to_string())?;
+    let best_contour = contours_vec.get(best_idx).map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
     // B2: Изоляция боковых артефактов — эрозия маски при обнаружении паттерна
     let mut page_mask = Mat::zeros(src.rows(), src.cols(), core::CV_8UC1)
-        .map_err(|e| e.to_string())?
+        .map_err(|e| DigitizationError::OpenCv(e.to_string()))?
         .to_mat()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
     let empty_hier = Mat::default();
     imgproc::draw_contours(
         &mut page_mask,
@@ -374,14 +381,14 @@ pub fn process_book_contours(src: &Mat) -> Result<PageVertices, String> {
         0,
         Point::new(0, 0),
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
     let refined_mask = isolate_side_artifacts(src, &page_mask, 8, 3)?;
 
     // Пересчитываем контур из улучшенной маски
     let mut refined_thresh = Mat::default();
     imgproc::threshold(&refined_mask, &mut refined_thresh, 127.0, 255.0, imgproc::THRESH_BINARY)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
     let mut refined_contours = Vector::<Vector::<Point>>::new();
     imgproc::find_contours(
         &refined_thresh,
@@ -390,7 +397,7 @@ pub fn process_book_contours(src: &Mat) -> Result<PageVertices, String> {
         imgproc::CHAIN_APPROX_SIMPLE,
         Point::new(0, 0),
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
     let best_contour = match refined_contours.get(0) {
         Ok(rc) => rc.clone(),
@@ -400,13 +407,15 @@ pub fn process_book_contours(src: &Mat) -> Result<PageVertices, String> {
     // Аппроксимация четырёхугольником
     let perimeter = geometry::arc_length(&best_contour, true).unwrap_or(0.0);
     if perimeter < 1.0 {
-        return Err("Периметр контура слишком мал для аппроксимации".to_string());
+        return Err(DigitizationError::DegenerateContour(
+            "Периметр контура слишком мал для аппроксимации".to_string(),
+        ));
     }
 
     let epsilon = perimeter * 0.02;
     let mut approx_vec = Vector::<Point>::new();
     geometry::approx_poly_dp(&best_contour, &mut approx_vec, epsilon, true)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
     let pts: Vec<Point> = approx_vec.to_vec();
 
@@ -415,9 +424,9 @@ pub fn process_book_contours(src: &Mat) -> Result<PageVertices, String> {
     }
 
     // minAreaRect как последний шанс
-    let rect = geometry::min_area_rect(&best_contour).map_err(|e| e.to_string())?;
+    let rect = geometry::min_area_rect(&best_contour).map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
     let mut pts_f: [Point2f; 4] = unsafe { std::mem::zeroed() };
-    rect.points(&mut pts_f).map_err(|e| e.to_string())?;
+    rect.points(&mut pts_f).map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
     let corners: Vec<Point> = pts_f.iter()
         .map(|p| Point::new(p.x as i32, p.y as i32))
         .collect();
@@ -426,7 +435,9 @@ pub fn process_book_contours(src: &Mat) -> Result<PageVertices, String> {
         return Ok(sort_four_points(corners));
     }
 
-    Err("Не удалось получить четыре вершины страницы ни одним методом".to_string())
+    Err(DigitizationError::InvalidPageGeometry(
+        "Не удалось получить четыре вершины страницы ни одним методом".to_string(),
+    ))
 }
 
 /// Детекция угла скоса страницы по проекционной линии.
@@ -435,7 +446,7 @@ pub fn process_book_contours(src: &Mat) -> Result<PageVertices, String> {
 ///   2. Горизонтальная проекция (сумма черных пикселей по строкам).
 ///   3. Поиск пиковов проекции (строки с текстом).
 ///   4. Линейная регрессия по пикам → угол наклона.
-pub fn detect_skew_angle(src: &Mat) -> Result<f64, String> {
+pub fn detect_skew_angle(src: &Mat) -> Result<f64, DigitizationError> {
     // Грейскейл
     let mut gray = Mat::default();
     if src.channels() > 1 {
@@ -446,7 +457,7 @@ pub fn detect_skew_angle(src: &Mat) -> Result<f64, String> {
             0,
             core::AlgorithmHint::ALGO_HINT_APPROX,
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
     } else {
         gray = src.clone();
     }
@@ -454,7 +465,7 @@ pub fn detect_skew_angle(src: &Mat) -> Result<f64, String> {
     // Бинаризация Otsu
     let mut thresh = Mat::default();
     imgproc::threshold(&gray, &mut thresh, 0.0, 255.0, imgproc::THRESH_BINARY_INV + imgproc::THRESH_OTSU)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
     // Горизонтальная проекция
     let rows = thresh.rows() as usize;
@@ -462,8 +473,8 @@ pub fn detect_skew_angle(src: &Mat) -> Result<f64, String> {
     let mut projection = vec![0.0_f64; rows];
 
     for row in 0..rows {
-        let row_data = thresh.row(row as i32).map_err(|e| e.to_string())?;
-        let row_vec: Vec<Vec<u8>> = row_data.to_vec_2d().map_err(|e| e.to_string())?;
+        let row_data = thresh.row(row as i32).map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
+        let row_vec: Vec<Vec<u8>> = row_data.to_vec_2d().map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
         for col in 0..cols {
             if row_vec[0][col] > 128 {
                 projection[row] += 1.0;
@@ -503,16 +514,16 @@ pub fn detect_skew_angle(src: &Mat) -> Result<f64, String> {
 }
 
 /// Поворот изображения на заданный угол.
-pub fn rotate_image(src: &Mat, angle: f64) -> Result<Mat, String> {
+pub fn rotate_image(src: &Mat, angle: f64) -> Result<Mat, DigitizationError> {
     if angle.abs() < 0.1 {
         return Ok(src.clone());
     }
 
-    let size = src.size().map_err(|e| e.to_string())?;
+    let size = src.size().map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
     let center = Point2f::new(size.width as f32 / 2.0, size.height as f32 / 2.0);
 
     let matrix = geometry::get_rotation_matrix_2d(center, angle, 1.0)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
     let mut dst = Mat::default();
     imgproc::warp_affine(
@@ -525,7 +536,7 @@ pub fn rotate_image(src: &Mat, angle: f64) -> Result<Mat, String> {
         core::Scalar::all(255.0),
         core::AlgorithmHint::ALGO_HINT_DEFAULT,
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
     Ok(dst)
 }
@@ -536,13 +547,13 @@ pub fn rotate_image(src: &Mat, angle: f64) -> Result<Mat, String> {
 ///   2. Разделить изображение на две половины.
 ///   3. Для каждой половины найти bounding box контента.
 ///   4. Вернуть обрезанные страницы.
-pub fn segment_pages(src: &Mat) -> Result<(Mat, Mat), String> {
-    let size = src.size().map_err(|e| e.to_string())?;
+pub fn segment_pages(src: &Mat) -> Result<(Mat, Mat), DigitizationError> {
+    let size = src.size().map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
     let half_width = size.width / 2;
 
     // Разделить на левую и правую половины
-    let left_roi = Mat::col_bounds(src, 0, half_width).map_err(|e| e.to_string())?;
-    let right_roi = Mat::col_bounds(src, half_width, size.width).map_err(|e| e.to_string())?;
+    let left_roi = Mat::col_bounds(src, 0, half_width).map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
+    let right_roi = Mat::col_bounds(src, half_width, size.width).map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
     let left_mat = left_roi.clone_pointee();
     let right_mat = right_roi.clone_pointee();
@@ -555,7 +566,7 @@ pub fn segment_pages(src: &Mat) -> Result<(Mat, Mat), String> {
 }
 
 /// Обрезка изображения до bounding box контента.
-fn crop_to_content(src: &Mat) -> Result<Mat, String> {
+fn crop_to_content(src: &Mat) -> Result<Mat, DigitizationError> {
     // Грейскейл
     let mut gray = Mat::default();
     if src.channels() > 1 {
@@ -566,7 +577,7 @@ fn crop_to_content(src: &Mat) -> Result<Mat, String> {
             0,
             core::AlgorithmHint::ALGO_HINT_APPROX,
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
     } else {
         gray = src.clone();
     }
@@ -574,10 +585,10 @@ fn crop_to_content(src: &Mat) -> Result<Mat, String> {
     // Бинаризация Otsu
     let mut thresh = Mat::default();
     imgproc::threshold(&gray, &mut thresh, 0.0, 255.0, imgproc::THRESH_BINARY_INV + imgproc::THRESH_OTSU)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
     // Найти bounding box
-    let bbox = geometry::bounding_rect(&thresh).map_err(|e| e.to_string())?;
+    let bbox = geometry::bounding_rect(&thresh).map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
     // Проверка валидности
     if bbox.width <= 0 || bbox.height <= 0 {
@@ -585,7 +596,7 @@ fn crop_to_content(src: &Mat) -> Result<Mat, String> {
     }
 
     // Обрезать
-    let roi = src.roi(bbox).map_err(|e| e.to_string())?;
+    let roi = src.roi(bbox).map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
     Ok(roi.clone_pointee())
 }
 

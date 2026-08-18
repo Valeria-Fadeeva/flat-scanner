@@ -7,6 +7,34 @@ pub mod seal_extraction;
 pub mod segmentation;
 pub mod warping;
 
+/// Типизированная ошибка цифровизации страницы (TECH_SPEC_addon_1.md §1.1).
+/// Возвращается всеми cv-функциями вместо свободных строк.
+#[derive(Debug, thiserror::Error)]
+pub enum DigitizationError {
+    /// Геометрия страницы невалидна: не 4 точки, площадь контура < 15% кадра,
+    /// контур вырожден или не выпуклый.
+    #[error("invalid page geometry: {0}")]
+    InvalidPageGeometry(String),
+
+    /// Контур страницы не обнаружен на кадре.
+    #[error("no page contour found: {0}")]
+    NoContourFound(String),
+
+    /// Контур вырожден (периметр/площадь ниже порога аппроксимации).
+    #[error("degenerate contour: {0}")]
+    DegenerateContour(String),
+
+    /// Ошибка низкоуровневого вызова OpenCV.
+    #[error("opencv error: {0}")]
+    OpenCv(String),
+}
+
+impl From<DigitizationError> for String {
+    fn from(e: DigitizationError) -> Self {
+        e.to_string()
+    }
+}
+
 // Реэкспорт структур данных для чистоты вызовов в main.rs
 pub use binarization::apply_sauvola_threshold;
 pub use segmentation::{CustomPoint, PageVertices, process_book_contours, segment_pages, detect_skew_angle, rotate_image};
@@ -16,7 +44,7 @@ pub use profile_filtering::{apply_profile, ProcessingProfile};
 pub use seal_extraction::{extract_seal_mask, overlay_seal_on_text};
 
 /// Полная коррекция страницы: перспективная трансформация + деварпинг корешка.
-pub fn rectify_and_dewarp_page(src: &Mat, vertices: &PageVertices, target_width: u32, target_height: u32) -> Result<Mat, String> {
+pub fn rectify_and_dewarp_page(src: &Mat, vertices: &PageVertices, target_width: u32, target_height: u32) -> Result<Mat, DigitizationError> {
     let to_point = |cp: &CustomPoint| Point2f::new(cp.x as f32, cp.y as f32);
 
     // Перспективная трансформация

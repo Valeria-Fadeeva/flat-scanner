@@ -5,11 +5,70 @@ use opencv::{
     prelude::*,
 };
 
+use super::DigitizationError;
+
+/// Валидация геометрии страницы перед гомографией (TECH_SPEC_addon_1.md §1.1).
+/// Требования:
+///   - строго 4 точки (гарантируется сигнатурой, но проверяем вырожденность);
+///   - площадь контура >= 15% площади кадра;
+///   - контур выпуклый (страница — почти выпуклый объект).
+/// Возвращает типизированную ошибку InvalidPageGeometry при сбое.
+fn validate_page_geometry(src: &Mat, pts: &[Point2f]) -> Result<(), DigitizationError> {
+    if pts.len() != 4 {
+        return Err(DigitizationError::InvalidPageGeometry(format!(
+            "ожидается строго 4 вершины страницы, получено {}",
+            pts.len()
+        )));
+    }
+
+    // Площадь контура по формуле площади многоугольника (shoelace)
+    let mut area = 0.0_f32;
+    for i in 0..4 {
+        let a = pts[i];
+        let b = pts[(i + 1) % 4];
+        area += a.x * b.y - b.x * a.y;
+    }
+    let contour_area = area.abs() / 2.0;
+
+    let frame_area = src.rows() as f32 * src.cols() as f32;
+    if frame_area <= 0.0 || contour_area < frame_area * 0.15 {
+        return Err(DigitizationError::InvalidPageGeometry(format!(
+            "площадь контура {:.1} px² ниже порога 15% кадра ({:.1} px²)",
+            contour_area,
+            frame_area * 0.15
+        )));
+    }
+
+    // Выпуклость: все поворотные векторы имеют одинаковый знак кривизны
+    let mut cross_sign: i32 = 0;
+    for i in 0..4 {
+        let o = pts[i];
+        let a = pts[(i + 1) % 4];
+        let b = pts[(i + 2) % 4];
+        let cross = (a.x - o.x) * (b.y - a.y) - (a.y - o.y) * (b.x - a.x);
+        let sign = if cross > 0.0 { 1 } else if cross < 0.0 { -1 } else { 0 };
+        if sign != 0 {
+            if cross_sign == 0 {
+                cross_sign = sign;
+            } else if cross_sign != sign {
+                return Err(DigitizationError::InvalidPageGeometry(
+                    "контур страницы не выпуклый".to_string(),
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// WarpPerspective: привести страницу к прямоугольному виду по вершинам P₁..P₄.
 /// Выход — изображение заданного размера (target_size).
-pub fn perspective_warp(src: &Mat, p1: Point2f, p2: Point2f, p3: Point2f, p4: Point2f, target_size: Size) -> Result<Mat, String> {
+pub fn perspective_warp(src: &Mat, p1: Point2f, p2: Point2f, p3: Point2f, p4: Point2f, target_size: Size) -> Result<Mat, DigitizationError> {
+    let pts = [p1, p2, p3, p4];
+    validate_page_geometry(src, &pts)?;
+
     let mut src_pts_vec = Vector::<Point2f>::new();
-    for p in [p1, p2, p3, p4] {
+    for p in pts {
         src_pts_vec.push(p);
     }
 
@@ -20,7 +79,7 @@ pub fn perspective_warp(src: &Mat, p1: Point2f, p2: Point2f, p3: Point2f, p4: Po
     dst_pts_vec.push(Point2f::new(0.0, target_size.height as f32));
 
     let m = geometry::get_perspective_transform(&src_pts_vec, &dst_pts_vec, DECOMP_LU)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
     let mut warped = Mat::default();
     imgproc::warp_perspective(
@@ -33,7 +92,7 @@ pub fn perspective_warp(src: &Mat, p1: Point2f, p2: Point2f, p3: Point2f, p4: Po
         core::Scalar::default(),
         core::AlgorithmHint::ALGO_HINT_APPROX,
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
     Ok(warped)
 }
@@ -119,7 +178,7 @@ fn apply_cylindrical_correction(src: &Mat, gray: &Mat, curvature: f32) -> Option
 ///   2. Детекция тени корешка по Градиенту яркости.
 ///   3. Построение Mesh Grid деформации через Text Line Tracking.
 ///   4. Применение remap(cx,cy→x',y') обратной координатной трансформации.
-pub fn dewarp_spine(src: &Mat) -> Result<Mat, String> {
+pub fn dewarp_spine(src: &Mat) -> Result<Mat, DigitizationError> {
     // 1. Грейскейл + бинаризация
     let mut gray = Mat::default();
     if src.channels() > 1 {
@@ -130,14 +189,14 @@ pub fn dewarp_spine(src: &Mat) -> Result<Mat, String> {
             0,
             opencv::core::AlgorithmHint::ALGO_HINT_APPROX,
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
     } else {
         gray = src.clone();
     }
 
     let mut binary = Mat::default();
     imgproc::threshold(&gray, &mut binary, 0.0, 255.0, imgproc::THRESH_BINARY_INV + imgproc::THRESH_OTSU)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
     // 2. Вертикальные линии Хафа на бинарном изображении
     let mut lines_vec = Vector::<Vec4i>::new();
@@ -150,7 +209,7 @@ pub fn dewarp_spine(src: &Mat) -> Result<Mat, String> {
         30.0,
         5.0,
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
     let hough_lines: Vec<Vec4i> = lines_vec.to_vec();
     if hough_lines.is_empty() {
@@ -228,14 +287,14 @@ pub fn dewarp_spine(src: &Mat) -> Result<Mat, String> {
     let cols = src.cols();
 
     let mut map_x = Mat::zeros(rows, cols, opencv::core::CV_32F)
-        .map_err(|e| e.to_string())?
+        .map_err(|e| DigitizationError::OpenCv(e.to_string()))?
         .to_mat()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
     let mut map_y = Mat::zeros(rows, cols, opencv::core::CV_32F)
-        .map_err(|e| e.to_string())?
+        .map_err(|e| DigitizationError::OpenCv(e.to_string()))?
         .to_mat()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
     unsafe {
         let ptr_x = map_x.data_mut() as *mut f32;
@@ -262,7 +321,7 @@ pub fn dewarp_spine(src: &Mat) -> Result<Mat, String> {
         core::Scalar::default(),
         core::AlgorithmHint::ALGO_HINT_APPROX,
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
     Ok(result)
 }
