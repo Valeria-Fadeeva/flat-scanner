@@ -808,8 +808,6 @@ async fn initialize_sane() -> (StatusCode, &'static str) {
 async fn process_scan_frame(
     Json(payload): Json<ScanTriggerRequest>,
 ) -> Result<Json<ScanResponse>, (StatusCode, String)> {
-    let start_time = std::time::Instant::now();
-
     // Блокирующий вызов scanimage выполняем в отдельном потоке, чтобы не фризить Tokio event-loop
     let captured_frame = tokio::task::spawn_blocking(|| -> Result<Mat, String> {
         println!("[⚙️ HARDWARE]: Поиск планшетных сканеров на USB-шине...");
@@ -830,18 +828,32 @@ async fn process_scan_frame(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Panic в spawn_blocking: {:?}", e)))?
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
+    // CV-конвейер (блокирующий OpenCV) выполняется в spawn_blocking, чтобы не фризить event-loop
+    let response = tokio::task::spawn_blocking(move || run_web_cv_pipeline(&captured_frame, &payload))
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Panic в spawn_blocking: {:?}", e)))?
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    Ok(Json(response))
+}
+
+/// Синхронный CV-конвейер веб-режима: разворот → вершины → коррекция → сегментация
+/// → де-скью → профили → сохранение. Вызывается из spawn_blocking.
+fn run_web_cv_pipeline(captured_frame: &Mat, payload: &ScanTriggerRequest) -> Result<ScanResponse, String> {
+    let start_time = std::time::Instant::now();
+
     // Принудительный разворот кадра А3 на 90° по часовой стрелке (как в CLI конвейере)
     let mut rotated_frame = Mat::default();
     opencv::core::rotate(
-        &captured_frame,
+        captured_frame,
         &mut rotated_frame,
         opencv::core::ROTATE_90_CLOCKWISE,
     )
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    .map_err(|e| format!("rotate: {}", e))?;
 
     // Детекция вершин страницы на развернутом кадре
     let vertices = cv::process_book_contours(&rotated_frame)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("CV error: {}", e)))?;
+        .map_err(|e| format!("CV error: {}", e))?;
 
     println!(
         "[📐 WEB CV]: Вершины восстановлены для UUID {}: {:?}",
@@ -931,20 +943,20 @@ async fn process_scan_frame(
     } else {
         let params = opencv::core::Vector::default();
         imgcodecs::imwrite(&left_path, &final_left, &params)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("imwrite left: {}", e)))?;
+            .map_err(|e| format!("imwrite left: {}", e))?;
         imgcodecs::imwrite(&right_path, &final_right, &params)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("imwrite right: {}", e)))?;
+            .map_err(|e| format!("imwrite right: {}", e))?;
         println!("[💾 PNG] Сохранено: {} и {}", left_path, right_path);
     }
 
     println!("[✅ WEB SUCCESS] Разворот обработан и сохранен: {} и {}", left_path, right_path);
 
-    Ok(Json(ScanResponse {
+    Ok(ScanResponse {
         status: "PreviewReady".to_string(),
-        uuid: payload.uuid,
+        uuid: payload.uuid.clone(),
         vertices,
         execution_time_ms: start_time.elapsed().as_millis(),
-    }))
+    })
 }
 
 // --- ТЕСТЫ G2: adjust-vertex ---
