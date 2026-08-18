@@ -1,8 +1,8 @@
 # TODO — Задачи на доработку проекта «Канонисса-Библиотека»
 
 **Дата создания:** 14 августа 2026 г.  
-**Дата актуализации:** 17 августа 2026 г.  
-**Исходник:** TECH_SPEC.md (разделы 10–12)
+**Дата актуализации:** 18 августа 2026 г.  
+**Исходник:** TECH_SPEC.md (разделы 10–12), TECH_SPEC_addon_1.md (§1.1–1.3), AUDIT.md
 
 ---
 
@@ -174,6 +174,46 @@
 - **Статус:** Реализовано, интегрировано, cargo build + cargo test OK (49 тестов), flutter analyze OK
 - **Зависимость:** E1 (ccitt_encoder), D1 (session_store)
 - **Замечание:** блокирующий вызов `assemble_pdf_from_tiff_pages` выполняется напрямую в async-хендлере (без `spawn_blocking`) — для локального инструмента блокировка event loop допустима, это обходит проблему не-Send future из-за `std::sync::MutexGuard`.
+
+---
+
+## Этап H: Инфраструктурный слой — AUDIT (TECH_SPEC_addon_1.md §1.1–1.3)
+
+**Исходник:** AUDIT.md. Пошаговое исправление нарушений аудита.
+
+### T1. Типизированная ошибка DigitizationError (§1.1)
+- [ ] Создать `enum DigitizationError { InvalidPageGeometry, NoContourFound, DegenerateContour, ... }` с `thiserror`
+- [ ] Заменить `Result<_, String>` на `Result<_, DigitizationError>` в cv-модулях (`segmentation.rs`, `warping.rs`)
+- **Файл:** `src/cv/mod.rs` (объявление), `src/cv/segmentation.rs`, `src/cv/warping.rs`
+- **Статус:** Не начато
+
+### T2. Геометрическая валидация перед гомографией (§1.1)
+- [ ] В `perspective_warp`/`process_book_contours` добавить проверки: `pts.len() == 4`, `contour_area >= 0.15 * frame_area`, `is_contour_convex`
+- [ ] При сбое — `Err(DigitizationError::InvalidPageGeometry)`
+- [ ] Привязка сбоя к статусу FAILED страницы в SQLite + запись `error_message`
+- **Файл:** `src/cv/warping.rs`, `src/cv/segmentation.rs`, `src/session_store.rs`
+- **Статус:** Не начато
+- **Зависимость:** T1
+
+### T3. spawn_blocking для cv-хендлеров (§1.2)
+- [ ] Обернуть cv-хендлеры (`process_scan_frame` уже ок; dewarp/segmentation/profile/export) в `tokio::task::spawn_blocking`
+- [ ] Передача данных через `Send`-совместимые структуры (`Mat`/`Vec<u8>`)
+- **Файл:** `src/main.rs`
+- **Статус:** Не начато
+
+### T4. Single Writer + FIFO-очередь SQLite (§1.3)
+- [ ] Создать `tokio::sync::mpsc::channel` задач записи
+- [ ] Запустить один фоновый воркер-писатель, выполняющий транзакции последовательно
+- [ ] Оставить чтения (`get_book_progress`, `get_pending_pages`) параллельными из Axum-потоков
+- **Файл:** `src/session_store.rs`, `src/main.rs`
+- **Статус:** Не начато
+
+### T5. Валидация и документация
+- [ ] `cargo test` — все тесты зелёные
+- [ ] Обновить `CHANGELOG.md` (Added/Changed)
+- [ ] Обновить `AUDIT.md` — пометить исправленные пункты ✅
+- **Статус:** Не начато
+- **Зависимость:** T1–T4
 
 ---
 
