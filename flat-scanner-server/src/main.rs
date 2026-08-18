@@ -28,6 +28,7 @@ mod pdf_importer; // Разборка сторонних PDF (G4)
 mod session_recovery; // Горячий рестарт сессии
 mod session_store; // Транзакционное хранение сессий сканирования
 mod write_queue; // Single Writer + FIFO-очередь (§1.3)
+mod pipeline; // Сквозной скоростной пайплайн (TECH_SPEC_addon_3.md §J)
 
 /// ТЗ ПК "Канонисса-Библиотека" v1.0 — Двухрежимное ядро (Web / CLI)
 #[derive(Parser, Debug)]
@@ -817,156 +818,45 @@ async fn initialize_sane() -> (StatusCode, &'static str) {
 async fn process_scan_frame(
     Json(payload): Json<ScanTriggerRequest>,
 ) -> Result<Json<ScanResponse>, (StatusCode, String)> {
-    // Блокирующий вызов scanimage выполняем в отдельном потоке, чтобы не фризить Tokio event-loop
-    let captured_frame = tokio::task::spawn_blocking(|| -> Result<Mat, String> {
-        println!("[⚙️ HARDWARE]: Поиск планшетных сканеров на USB-шине...");
+    // §J: Сквозной скоростной пайплайн через PageProcessor
+    let profile_opt = payload.profile.clone();
+    let uuid = payload.uuid.clone();
+    let uuid_for_task = uuid.clone();
+
+    let result = tokio::task::spawn_blocking(move || {
+        let processor = pipeline::PageProcessor::new("./split".to_string());
         let device_name = sane_core::detect_hardware_scanner()
             .map_err(|e| format!("Аппаратный сбой при обнаружении сканера: {}", e))?;
-
-        println!("[📷 CAPTURE]: Захват кадра со сканера '{}'", device_name);
-        let mat = sane_core::capture_sane_frame(&device_name)
-            .map_err(|e| format!("Ошибка захвата матрицы SANE: {}", e))?;
-
-        if mat.empty() {
-            return Err("Получен пустой буфер кадра от сканера".to_string());
-        }
-
-        Ok(mat)
+        processor.process_page(&uuid_for_task, profile_opt.as_deref(), &device_name)
     })
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Panic в spawn_blocking: {:?}", e)))?
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
-    // CV-конвейер (блокирующий OpenCV) выполняется в spawn_blocking, чтобы не фризить event-loop
-    let response = tokio::task::spawn_blocking(move || run_web_cv_pipeline(&captured_frame, &payload))
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Panic в spawn_blocking: {:?}", e)))?
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    Ok(Json(response))
-}
-
-/// Синхронный CV-конвейер веб-режима: разворот → вершины → коррекция → сегментация
-/// → де-скью → профили → сохранение. Вызывается из spawn_blocking.
-fn run_web_cv_pipeline(captured_frame: &Mat, payload: &ScanTriggerRequest) -> Result<ScanResponse, String> {
-    let start_time = std::time::Instant::now();
-
-    // Принудительный разворот кадра А3 на 90° по часовой стрелке (как в CLI конвейере)
-    let mut rotated_frame = Mat::default();
-    opencv::core::rotate(
-        captured_frame,
-        &mut rotated_frame,
-        opencv::core::ROTATE_90_CLOCKWISE,
-    )
-    .map_err(|e| format!("rotate: {}", e))?;
-
-    // Детекция вершин страницы на развернутом кадре
-    let vertices = cv::process_book_contours(&rotated_frame)
-        .map_err(|e| format!("CV error: {}", e))?;
-
-    println!(
-        "[📐 WEB CV]: Вершины восстановлены для UUID {}: {:?}",
-        payload.uuid, vertices
-    );
-
-    // Полная коррекция страницы: перспективная трансформация + деварпинг корешка
-    const PAGE_WIDTH: u32 = 2400;
-    const PAGE_HEIGHT: u32 = 3200;
-    let corrected_page = cv::rectify_and_dewarp_page(
-        &rotated_frame,
-        &vertices,
-        PAGE_WIDTH,
-        PAGE_HEIGHT,
-    )
-    .unwrap_or_else(|e| {
-        println!("[⚠️ CORRECT] Ошибка коррекции: {}. Использую исходный кадр.", e);
-        rotated_frame.clone()
-    });
-
-    // Сегментация разворота на левую и правую страницы
-    let (left_page, right_page) = cv::segment_pages(&corrected_page)
-        .unwrap_or_else(|e| {
-            println!("[⚠️ SEGMENT] Ошибка сегментации: {}. Использую исходный кадр.", e);
-            (corrected_page.clone(), corrected_page.clone())
-        });
-
-    // Детекция и выравнивание скоса левой страницы
-    let left_skew = cv::detect_skew_angle(&left_page).unwrap_or(0.0);
-    println!("[📐 SKEW LEFT] Угол скоса левой страницы: {:.2}°", left_skew);
-    let left_aligned = cv::rotate_image(&left_page, -left_skew).unwrap_or(left_page.clone());
-
-    // Детекция и выравнивание скоса правой страницы
-    let right_skew = cv::detect_skew_angle(&right_page).unwrap_or(0.0);
-    println!("[📐 SKEW RIGHT] Угол скоса правой страницы: {:.2}°", right_skew);
-    let right_aligned = cv::rotate_image(&right_page, -right_skew).unwrap_or(right_page.clone());
-
-    // M8: Hot-reload калибровки (k_factor, window_size, profile из calibration.json)
-    let calib = cv::calibration::global_calibration().get();
-    let profile = match &payload.profile {
-        Some(p) => cv::ProcessingProfile::from_str_lenient(p),
-        None => calib.processing_profile(),
-    };
-    println!(
-        "[⚙️ CALIB] k={}, window={}, profile={:?}",
-        calib.k_factor, calib.window_size, profile
-    );
-
-    // E2: Multi-profile обработка каждой страницы
-    let final_left = cv::apply_profile(&left_aligned, profile, calib.k_factor, calib.window_size)
-        .unwrap_or_else(|e| {
-            println!("[⚠️ BIN LEFT] Ошибка обработки левой страницы: {}", e);
-            left_aligned.clone()
-        });
-    let final_right = cv::apply_profile(&right_aligned, profile, calib.k_factor, calib.window_size)
-        .unwrap_or_else(|e| {
-            println!("[⚠️ BIN RIGHT] Ошибка обработки правой страницы: {}", e);
-            right_aligned.clone()
-        });
-
-    // Сохранение страниц: CCITT G4 TIFF для 1-бит, PNG для grayscale/color
-    let output_dir = "./split";
-    if !std::path::Path::new(output_dir).exists() {
-        std::fs::create_dir_all(output_dir).ok();
-    }
-    let (left_path, right_path) = if profile == cv::ProcessingProfile::TextBw1bit {
-        (
-            format!("{}/page_{}_left.tiff", output_dir, payload.uuid),
-            format!("{}/page_{}_right.tiff", output_dir, payload.uuid),
-        )
-    } else {
-        (
-            format!("{}/page_{}_left.png", output_dir, payload.uuid),
-            format!("{}/page_{}_right.png", output_dir, payload.uuid),
-        )
-    };
-
-    if profile == cv::ProcessingProfile::TextBw1bit {
-        match cv::encode_ccitt_g4_to_file(&final_left, &left_path) {
-            Ok(size) => println!("[💾 CCITT G4 LEFT] {} KB", size / 1024),
-            Err(e) => println!("[⚠️ SAVE LEFT] Ошибка кодирования левой страницы: {}", e),
+    // §1.3: Запись путей и вершин через FIFO-очередь
+    let store = session_store::global_session_store("./data.db");
+    if let Ok(s) = store.lock() {
+        if let Ok(Some(spread)) = s.get_last_spread(&uuid) {
+            let _ = write_queue::submit(write_queue::WriteTask::UpdateSpreadPaths {
+                spread_id: spread.id,
+                left_path: result.left_path.clone(),
+                right_path: result.right_path.clone(),
+            });
+            let _ = write_queue::submit(write_queue::WriteTask::UpdateSpreadStatus {
+                spread_id: spread.id,
+                status: session_store::SpreadStatus::Completed,
+            });
         }
-        match cv::encode_ccitt_g4_to_file(&final_right, &right_path) {
-            Ok(size) => println!("[💾 CCITT G4 RIGHT] {} KB", size / 1024),
-            Err(e) => println!("[⚠️ SAVE RIGHT] Ошибка кодирования правой страницы: {}", e),
-        }
-    } else {
-        let params = opencv::core::Vector::default();
-        imgcodecs::imwrite(&left_path, &final_left, &params)
-            .map_err(|e| format!("imwrite left: {}", e))?;
-        imgcodecs::imwrite(&right_path, &final_right, &params)
-            .map_err(|e| format!("imwrite right: {}", e))?;
-        println!("[💾 PNG] Сохранено: {} и {}", left_path, right_path);
     }
 
-    println!("[✅ WEB SUCCESS] Разворот обработан и сохранен: {} и {}", left_path, right_path);
-
-    Ok(ScanResponse {
+    Ok(Json(ScanResponse {
         status: "PreviewReady".to_string(),
-        uuid: payload.uuid.clone(),
-        vertices,
-        execution_time_ms: start_time.elapsed().as_millis(),
-    })
+        uuid,
+        vertices: result.vertices,
+        execution_time_ms: result.execution_time_ms,
+    }))
 }
+
 
 // --- ТЕСТЫ G2: adjust-vertex ---
 #[cfg(test)]
