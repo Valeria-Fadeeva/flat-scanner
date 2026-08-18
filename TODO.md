@@ -269,6 +269,39 @@
 
 ---
 
+## Этап J: Сквозной скоростной пайплайн (TECH_SPEC_addon_3.md)
+
+**Исходник:** TECH_SPEC_addon_3.md (§2–§4). Сквозная функция `process_page` — минимальное удержание сканера, мгновенный сброс выпрямленного ч/б кадра на диск.
+
+### J1. Модуль `src/pipeline.rs` ✅ ЗАВЕРШЕНО
+- [x] `fast_binarize(src: &Mat) -> Result<Mat, DigitizationError>` — нативный `imgproc::adaptive_threshold` (ADAPTIVE_THRESH_MEAN_C, blockSize=11, C=2.0), перевод в grayscale при 3 каналах
+- [x] `pub struct PageProcessor { write_queue_tx, output_dir }` + `new()`
+- [x] `pub async fn process_page(book_id, page_number, scanner: SaneScanner)` — вся цепочка в одном `tokio::task::spawn_blocking`:
+  - `SaneScanner::read_frame` (пред-аллокация буфера 8MB) → `imdecode`
+  - `cv::segmentation::process_book_contours` → `PageVertices`
+  - `cv::warping::perspective_warp` (внутри — `validate_page_geometry` + `safe_calculate_homography`, addon_2 §3)
+  - `fast_binarize` → `imwrite` PNG в `output_dir/<book_id>_<page>.png`
+  - `tx.blocking_send(WriteTask::UpdatePage { status: "DEWARPED" })`
+- **Файл:** `flat-scanner-server/src/pipeline.rs`
+- **Статус:** Реализовано, cargo check + cargo test OK
+- **Зависимость:** U2/U3 (SaneScanner), U4/U5 (валидатор + гомография), T4 (write_queue)
+
+### J2. `WriteTask::UpdatePage` ✅ ЗАВЕРШЕНО
+- [x] Новый вариант `UpdatePage { book_id, page_number, raw_path, dewarped_path, status, error }` в `WriteTask`
+- [x] Обработка в воркере-писателе: UPDATE таблицы spreads по book_uuid/spread_index
+- **Файл:** `flat-scanner-server/src/write_queue.rs`
+- **Статус:** Реализовано, cargo check + cargo test OK
+- **Зависимость:** T4
+
+### J3. Интеграция в `main.rs` ✅ ЗАВЕРШЕНО
+- [x] `mod pipeline;` + конструирование `PageProcessor` (канал очереди + `output_dir` из config)
+- [x] Передача в хендлер сканирования
+- **Файл:** `flat-scanner-server/src/main.rs`
+- **Статус:** Реализовано, cargo check + cargo test OK
+- **Зависимость:** J1, J2
+
+---
+
 ## Дополнительные задачи
 
 ### M8. Пакетная калибровка порогов Sauvola ✅ ЗАВЕРШЕНО
