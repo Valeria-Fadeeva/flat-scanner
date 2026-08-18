@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+- **T1**: Типизированная ошибка `DigitizationError` (`thiserror`) в `src/cv/mod.rs` — варианты `InvalidPageGeometry`, `NoContourFound`, `DegenerateContour`. Заменены свободные строки ошибок в cv-модулях (`segmentation.rs`, `warping.rs`).
+- **T2**: Геометрическая валидация перед гомографией — `perspective_warp`/`process_book_contours` проверяют `pts.len() == 4`, `contour_area >= 0.15 * frame_area`, `is_contour_convex`. Сбой → `Err(DigitizationError::InvalidPageGeometry)` + статус FAILED + `error_message` в SQLite (`update_spread_error`).
+- **T3**: Все cv-хендлеры (`process_scan_frame`, dewarp/segmentation/profile/export) изолированы в `tokio::task::spawn_blocking` с `Send`-совместимыми структурами (`Mat`/`Vec<u8>`).
+- **T4**: Single Writer + FIFO-очередь SQLite — `src/write_queue.rs` на `tokio::sync::mpsc::unbounded_channel`. Один фоновый воркер-писатель (`spawn_writer`) выполняет транзакции последовательно; чтения остаются параллельными из Axum-потоков.
+
 ### Changed
 - **Release pipeline**: `release.sh` теперь публикует релиз через совместимый REST API (GitHub + Forgejo) и загружает два таргетированных архива (`v<ver>-server.tar.gz`, `v<ver>-client.tar.gz`) как assets, вместо полагания на автогенерированный GitHub-артефакт всего дерева. `archive/` добавлен в `.gitignore`. Перед упаковкой выполняется предварительная очистка артефактов сборки (`cargo clean` / `flutter clean` + удаление `target/`, `build/`, `.dart_tool/`), чтобы релизные архивы не содержали кэши компиляции.
 

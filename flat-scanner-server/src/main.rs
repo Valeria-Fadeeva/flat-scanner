@@ -27,6 +27,7 @@ mod pdf_exporter; // Сборка финального PDF из страниц (
 mod pdf_importer; // Разборка сторонних PDF (G4)
 mod session_recovery; // Горячий рестарт сессии
 mod session_store; // Транзакционное хранение сессий сканирования
+mod write_queue; // Single Writer + FIFO-очередь (§1.3)
 
 /// ТЗ ПК "Канонисса-Библиотека" v1.0 — Двухрежимное ядро (Web / CLI)
 #[derive(Parser, Debug)]
@@ -87,6 +88,10 @@ async fn main() -> Result<(), String> {
     let db_path = "./data.db";
     let session_store = session_store::global_session_store(db_path);
     println!("[💾 SESSION STORE]: Инициализирован SQLite на {}", db_path);
+
+    // §1.3: Запуск единственного воркера записи в SQLite
+    write_queue::spawn_writer(session_store.clone());
+    println!("[✍️ WRITE QUEUE]: FIFO-очередь записи активна");
 
     // D2: Горячий рестарт сессии
     let recovery = session_recovery::SessionRecovery::new(None);
@@ -325,14 +330,18 @@ async fn adjust_vertex(
         spread.right_vertices.as_deref().unwrap_or("{}")
     };
 
-    store
-        .update_spread_vertices(spread.id, left_v, right_v)
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": e})),
-            )
-        })?;
+    // §1.3: Запись вершин через FIFO-очередь единственного воркера
+    write_queue::submit(write_queue::WriteTask::UpdateSpreadVertices {
+        spread_id: spread.id,
+        left_vertices: left_v.to_string(),
+        right_vertices: right_v.to_string(),
+    })
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e})),
+        )
+    })?;
 
     println!(
         "[📐 ADJUST VERTEX]: UUID={}, page={}, index={}, new=({}, {})",

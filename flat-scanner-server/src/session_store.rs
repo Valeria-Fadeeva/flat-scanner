@@ -54,7 +54,7 @@ use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 /// Статус книги в сессии
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BookStatus {
     /// Книга в процессе сканирования
@@ -91,7 +91,7 @@ impl BookStatus {
 }
 
 /// Статус разворота (спреда)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SpreadStatus {
     /// Ожидает обработки
@@ -442,15 +442,17 @@ impl SessionStore {
     /// # Возвращает
     /// `Result<(), String>` — успех или описание ошибки
     pub fn update_spread_vertices(
-        &self,
+        &mut self,
         spread_id: i64,
         left_vertices: &str,
         right_vertices: &str,
     ) -> Result<(), String> {
         let now = chrono_now();
 
-        let rows_affected = self
-            .conn
+        // §1.3: Атомарная транзакция — комплексное обновление вершин + timestamp
+        let tx = self.conn.transaction().map_err(|e| format!("Ошибка транзакции: {}", e))?;
+
+        let rows_affected = tx
             .execute(
                 "UPDATE spreads SET left_vertices = ?1, right_vertices = ?2, updated_at = ?3 WHERE id = ?4",
                 params![left_vertices, right_vertices, now, spread_id],
@@ -461,6 +463,7 @@ impl SessionStore {
             return Err(format!("Разворот с ID {} не найден", spread_id));
         }
 
+        tx.commit().map_err(|e| format!("Ошибка commit: {}", e))?;
         Ok(())
     }
 
@@ -1050,7 +1053,7 @@ mod tests {
 
     #[test]
     fn test_update_spread_vertices() {
-        let store = SessionStore::new(":memory:").unwrap();
+        let mut store = SessionStore::new(":memory:").unwrap();
         let book = store.create_book("Книга").unwrap();
         let spread = store.add_spread(&book.uuid, 0, None, None).unwrap();
 

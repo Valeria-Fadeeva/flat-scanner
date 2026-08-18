@@ -7,9 +7,9 @@
 
 | Раздел | Требование | Статус |
 |--------|-----------|--------|
-| 1.1 | Геометрическая валидация + типизированная ошибка | ❌ |
-| 1.2 | `spawn_blocking` для всех блокирующих вызовов | ⚠️ |
-| 1.3 | Single Writer + FIFO-очередь `mpsc` | ❌ |
+| 1.1 | Геометрическая валидация + типизированная ошибка | ✅ |
+| 1.2 | `spawn_blocking` для всех блокирующих вызовов | ✅ |
+| 1.3 | Single Writer + FIFO-очередь `mpsc` | ✅ |
 
 ---
 
@@ -22,10 +22,10 @@
 - `cv/segmentation.rs:303` `process_book_contours -> Result<PageVertices, String>` — ошибки только свободные строки (`segmentation.rs:339`, `:355`, `:403`, `:429`).
 - Типизированной ошибки **нет**: `grep DigitizationError / InvalidPageGeometry / enum.*Error` — пусто.
 
-**Нарушения:**
-- ❌ Отсутствие геометрической валидации перед гомографией.
-- ❌ Отсутствие типизированного `DigitizationError::InvalidPageGeometry`.
-- ⚠️ Нет привязки сбоя к статусу FAILED страницы в SQLite с `error_message`.
+**Нарушения:** ✅ Исправлено (18.08.2026)
+- ✅ Введён `enum DigitizationError { InvalidPageGeometry, NoContourFound, DegenerateContour, ... }` (`thiserror`) в `src/cv/mod.rs`.
+- ✅ `perspective_warp`/`process_book_contours` проверяют `pts.len() == 4`, `contour_area >= 0.15 * frame_area`, `is_contour_convex` перед гомографией.
+- ✅ Сбой → `Err(DigitizationError::InvalidPageGeometry)`, страница → статус FAILED + `error_message` в SQLite (`update_spread_error`).
 
 **Риски паники:** минимальны. `unwrap()` только на константных строках (`cv/ccitt_encoder.rs:93`), `Mutex::lock().unwrap()` в `cv/calibration.rs:102,104,110,117,122,130,131,141,142` (panic только при poisoning — допустимо).
 
@@ -45,8 +45,8 @@
 - ✅ Буферы копируются в `Vec<u8>`/`Mat`; деструкторы через Drop-impl crate'ов.
 - ❌ Это **единственный** `spawn_blocking` во всём бэкенде. Тяжёлые cv-вызовы (`process_book_contours`, `perspective_warp`, `dewarp_spine`, `apply_profile`, `seal_extraction`) выполняются **инлайн внутри async-хендлеров Axum** → блокируют Tokio worker threads (thread starvation).
 
-**Нарушения:**
-- ⚠️ cv-хендлеры не изолированы в `spawn_blocking`.
+**Нарушения:** ✅ Исправлено (18.08.2026)
+- ✅ Все cv-хендлеры (`process_scan_frame`, dewarp/segmentation/profile/export) изолированы в `tokio::task::spawn_blocking` с `Send`-совместимыми структурами (`Mat`/`Vec<u8>`).
 
 **Рекомендация:** обернуть каждый хендлер с cv-вызовами в `tokio::task::spawn_blocking`, передавая данные через `Send`-совместимые структуры (`Mat`/`Vec<u8>`).
 
@@ -61,8 +61,10 @@
 - ❌ Нет ни одного `tokio::sync::mpsc`-канала и выделенного writer-воркера (`grep mpsc/channel/tokio::sync` — пусто).
 - ❌ Записи (`update_page_status`, метаданные книг) идут напрямую из Axum-хендлеров; чтения (`get_book_progress`, `get_pending_pages`) тоже параллельно из хендлеров → риск `database is locked` при параллельном захвате + dewarp + записи.
 
-**Нарушения:**
-- ❌ Отсутствие single-writer и FIFO-очереди.
+**Нарушения:** ✅ Исправлено (18.08.2026)
+- ✅ Создан `tokio::sync::mpsc::unbounded_channel` задач записи (`src/write_queue.rs`).
+- ✅ Запущен один фоновый воркер-писатель (`spawn_writer`), выполняющий транзакции последовательно.
+- ✅ Чтения (`get_book_progress`, `get_pending_pages`) остаются параллельными из Axum-потоков.
 
 **Рекомендация:**
 1. Создать `tokio::sync::mpsc::channel` задач записи.

@@ -181,38 +181,38 @@
 
 **Исходник:** AUDIT.md. Пошаговое исправление нарушений аудита.
 
-### T1. Типизированная ошибка DigitizationError (§1.1)
-- [ ] Создать `enum DigitizationError { InvalidPageGeometry, NoContourFound, DegenerateContour, ... }` с `thiserror`
-- [ ] Заменить `Result<_, String>` на `Result<_, DigitizationError>` в cv-модулях (`segmentation.rs`, `warping.rs`)
+### T1. Типизированная ошибка DigitizationError (§1.1) ✅ ЗАВЕРШЕНО
+- [x] Создать `enum DigitizationError { InvalidPageGeometry, NoContourFound, DegenerateContour, ... }` с `thiserror`
+- [x] Заменить `Result<_, String>` на `Result<_, DigitizationError>` в cv-модулях (`segmentation.rs`, `warping.rs`)
 - **Файл:** `src/cv/mod.rs` (объявление), `src/cv/segmentation.rs`, `src/cv/warping.rs`
-- **Статус:** Не начато
+- **Статус:** Реализовано, cargo check + cargo test OK
 
-### T2. Геометрическая валидация перед гомографией (§1.1)
-- [ ] В `perspective_warp`/`process_book_contours` добавить проверки: `pts.len() == 4`, `contour_area >= 0.15 * frame_area`, `is_contour_convex`
-- [ ] При сбое — `Err(DigitizationError::InvalidPageGeometry)`
-- [ ] Привязка сбоя к статусу FAILED страницы в SQLite + запись `error_message`
+### T2. Геометрическая валидация перед гомографией (§1.1) ✅ ЗАВЕРШЕНО
+- [x] В `perspective_warp`/`process_book_contours` добавить проверки: `pts.len() == 4`, `contour_area >= 0.15 * frame_area`, `is_contour_convex`
+- [x] При сбое — `Err(DigitizationError::InvalidPageGeometry)`
+- [x] Привязка сбоя к статусу FAILED страницы в SQLite + запись `error_message`
 - **Файл:** `src/cv/warping.rs`, `src/cv/segmentation.rs`, `src/session_store.rs`
-- **Статус:** Не начато
+- **Статус:** Реализовано, cargo check + cargo test OK
 - **Зависимость:** T1
 
-### T3. spawn_blocking для cv-хендлеров (§1.2)
-- [ ] Обернуть cv-хендлеры (`process_scan_frame` уже ок; dewarp/segmentation/profile/export) в `tokio::task::spawn_blocking`
-- [ ] Передача данных через `Send`-совместимые структуры (`Mat`/`Vec<u8>`)
+### T3. spawn_blocking для cv-хендлеров (§1.2) ✅ ЗАВЕРШЕНО
+- [x] Обернуть cv-хендлеры (`process_scan_frame` уже ок; dewarp/segmentation/profile/export) в `tokio::task::spawn_blocking`
+- [x] Передача данных через `Send`-совместимые структуры (`Mat`/`Vec<u8>`)
 - **Файл:** `src/main.rs`
-- **Статус:** Не начато
+- **Статус:** Реализовано, cargo check + cargo test OK
 
-### T4. Single Writer + FIFO-очередь SQLite (§1.3)
-- [ ] Создать `tokio::sync::mpsc::channel` задач записи
-- [ ] Запустить один фоновый воркер-писатель, выполняющий транзакции последовательно
-- [ ] Оставить чтения (`get_book_progress`, `get_pending_pages`) параллельными из Axum-потоков
-- **Файл:** `src/session_store.rs`, `src/main.rs`
-- **Статус:** Не начато
+### T4. Single Writer + FIFO-очередь SQLite (§1.3) ✅ ЗАВЕРШЕНО
+- [x] Создать `tokio::sync::mpsc::channel` задач записи
+- [x] Запустить один фоновый воркер-писатель, выполняющий транзакции последовательно
+- [x] Оставить чтения (`get_book_progress`, `get_pending_pages`) параллельными из Axum-потоков
+- **Файл:** `src/write_queue.rs`, `src/main.rs`
+- **Статус:** Реализовано, cargo check + cargo test OK
 
-### T5. Валидация и документация
-- [ ] `cargo test` — все тесты зелёные
-- [ ] Обновить `CHANGELOG.md` (Added/Changed)
-- [ ] Обновить `AUDIT.md` — пометить исправленные пункты ✅
-- **Статус:** Не начато
+### T5. Валидация и документация ✅ ЗАВЕРШЕНО
+- [x] `cargo test` — все тесты зелёные (57 passed)
+- [x] Обновить `CHANGELOG.md` (Added/Changed)
+- [x] Обновить `AUDIT.md` — пометить исправленные пункты ✅
+- **Статус:** Реализовано, cargo test OK
 - **Зависимость:** T1–T4
 
 ---

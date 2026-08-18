@@ -12,7 +12,7 @@ depends=(
   'glibc'
   'gtk3'
   'libnotify'
-  'libuuid'
+  'util-linux-libs'
   'libxkbcommon'
 )
 makedepends=(
@@ -21,14 +21,14 @@ makedepends=(
 # Предотвращаем любые попытки strip или сжатия бинарников Flutter, так как это может сломать нативный AOT-код Dart
 options=('!strip' '!lto')
 source=(
-  "${pkgname}-${pkgver}.tar.gz::https://github.com/Valeria-Fadeeva/flat-scanner/archive/refs/tags/v${pkgver}-client.tar.gz"
+  "flat-scanner-${pkgver}.tar.gz::https://github.com/Valeria-Fadeeva/flat-scanner/archive/refs/tags/v${pkgver}.tar.gz"
   "${pkgname}.desktop"
 )
 sha256sums=('SKIP'
             'SKIP')
 
 build() {
-  cd "${srcdir}/${pkgname}-${pkgver}/flat-scanner-client-flutter"
+  cd "${srcdir}/flat-scanner-${pkgver}/flat-scanner-client-flutter"
 
   # Гарантируем, что сборка под Linux десктоп активирована во внутреннем конфиге Flutter
   flutter config --enable-linux-desktop
@@ -41,7 +41,7 @@ build() {
 }
 
 package() {
-  cd "${srcdir}/${pkgname}-${pkgver}/flat-scanner-client-flutter"
+  cd "${srcdir}/flat-scanner-${pkgver}/flat-scanner-client-flutter"
 
   local _destdir="${pkgdir}/usr/lib/${pkgname}"
   install -d "${_destdir}"
@@ -51,11 +51,11 @@ package() {
   cp -r build/linux/x64/release/bundle/* "${_destdir}/"
 
   # Выставляем права на чтение и выполнение для главного исполняемого файла
-  chmod 755 "${_destdir}/${pkgname}"
+  chmod 755 "${_destdir}/flat_scanner_client"
 
   # Создаем глобальный симлинк в /usr/bin/ для запуска приложения из любой точки системы
   install -d "${pkgdir}/usr/bin"
-  ln -s "/usr/lib/${pkgname}/${pkgname}" "${pkgdir}/usr/bin/${pkgname}"
+  ln -s "/usr/lib/${pkgname}/flat_scanner_client" "${pkgdir}/usr/bin/flat_scanner_client"
 
   # Установка Desktop-файла интеграции в меню приложений XDG
   install -Dm644 "${srcdir}/${pkgname}.desktop" \
