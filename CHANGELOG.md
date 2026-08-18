@@ -3,6 +3,11 @@
 ## [Unreleased]
 
 ### Added
+- **U1**: Расширение `DigitizationError` до контракта TECH_SPEC_addon_2.md §4 — варианты `SaneError`, `OpenCVPanic`, `DatabaseError(#[from] rusqlite::Error)`, `IoError(#[from] std::io::Error)`.
+- **U2**: RAII-обёртка `SaneScanner` (`src/sane_core.rs`) — инкапсуляция child-процесса `scanimage` в `struct SaneScanner { child: Option<Child> }` с `impl Drop` (гарантированное завершение процесса) и `unsafe impl Send`. `capture_sane_frame` переведён на обёртку.
+- **U3**: Переиспользуемый буфер чтения кадров (§2.3) — `SaneScanner::read_frame(&mut self, buffer: &mut Vec<u8>)` переиспользует ёмкость вектора между кадрами, предотвращая фрагментацию кучи при пакетном сканировании.
+- **U4**: Геометрический валидатор `validate_page_geometry` (§3.2) — `pub fn validate_page_geometry(contour: &Vector<Point2f>, frame_area: f64) -> Result<(), DigitizationError>` в `src/cv/warping.rs`. Порядок проверок: (1) строго 4 опорные точки → (2) выпуклость контура (знак кривизны поворотных векторов) → (3) площадь контура ≥ 15% кадра (shoelace). Вызывается ДО `warp_perspective`/`get_perspective_transform`.
+- **U5**: `safe_calculate_homography` (§3.1) — `pub fn safe_calculate_homography(src_points, dst_points) -> Result<Mat, DigitizationError>` с изоляцией `cv::Exception` из `get_perspective_transform`.
 - **T1**: Типизированная ошибка `DigitizationError` (`thiserror`) в `src/cv/mod.rs` — варианты `InvalidPageGeometry`, `NoContourFound`, `DegenerateContour`. Заменены свободные строки ошибок в cv-модулях (`segmentation.rs`, `warping.rs`).
 - **T2**: Геометрическая валидация перед гомографией — `perspective_warp`/`process_book_contours` проверяют `pts.len() == 4`, `contour_area >= 0.15 * frame_area`, `is_contour_convex`. Сбой → `Err(DigitizationError::InvalidPageGeometry)` + статус FAILED + `error_message` в SQLite (`update_spread_error`).
 - **T3**: Все cv-хендлеры (`process_scan_frame`, dewarp/segmentation/profile/export) изолированы в `tokio::task::spawn_blocking` с `Send`-совместимыми структурами (`Mat`/`Vec<u8>`).

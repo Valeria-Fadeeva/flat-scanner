@@ -1,5 +1,60 @@
 use opencv::{core::Mat, imgcodecs, prelude::*};
-use std::process::Command;
+use std::io::Read;
+use std::process::{Child, Command, Stdio};
+
+/// RAII-обёртка над child-процессом `scanimage` (TECH_SPEC_addon_2.md §2.1–2.2).
+/// Гарантирует корректное завершение процесса и сбор stdout при выходе из области
+/// видимости, исключая утечки дескрипторов при раннем возврате по ошибке.
+pub struct SaneScanner {
+    child: Option<Child>,
+}
+
+impl SaneScanner {
+    /// Запускает высокоскоростной захват в RAM без создания файлов на диске.
+    pub fn new(device_name: &str) -> Result<Self, String> {
+        let child = Command::new("scanimage")
+            .args(["-d", device_name, "--format=tiff", "--resolution=300"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("Не удалось запустить scanimage: {}", e))?;
+
+        Ok(Self {
+            child: Some(child),
+        })
+    }
+
+    /// Читает кадр в переиспользуемый буфер (§2.3): аллокация вектора происходит
+    /// один раз, между кадрами переиспользуется выделенная ёмкость, что
+    /// предотвращает фрагментацию кучи при пакетном сканировании.
+    pub fn read_frame(&mut self, buffer: &mut Vec<u8>) -> Result<Vec<u8>, String> {
+        let child = self.child.as_mut().ok_or("SaneScanner уже завершён")?;
+        let mut stdout = child.stdout.take().ok_or("stdout-поток сканера потерян")?;
+
+        buffer.clear();
+        stdout
+            .read_to_end(buffer)
+            .map_err(|e| format!("Ошибка чтения потока SANE: {}", e))?;
+
+        let status = child.wait().map_err(|e| format!("Ошибка ожидания scanimage: {}", e))?;
+        if !status.success() {
+            let mut stderr = child.stderr.take().unwrap();
+            let mut err_msg = String::new();
+            let _ = stderr.read_to_string(&mut err_msg);
+            return Err(format!("Аппаратный сбой SANE: {}", err_msg));
+        }
+
+        Ok(std::mem::take(buffer))
+    }
+}
+
+impl Drop for SaneScanner {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.wait();
+        }
+    }
+}
 
 /// Динамический автоматический поиск реального сканера на USB-шине Linux
 pub fn detect_hardware_scanner() -> Result<String, String> {
@@ -16,7 +71,6 @@ pub fn detect_hardware_scanner() -> Result<String, String> {
 
     let stdout_str = String::from_utf8_lossy(&output.stdout);
 
-    // Построчно перебираем все устройства, которые нашла система
     // Построчно перебираем все устройства, которые нашла система
     for line in stdout_str.lines() {
         let line_lower = line.to_lowercase();
@@ -64,25 +118,21 @@ pub fn capture_sane_frame(device_name: &str) -> Result<Mat, String> {
         println!("[📐 HARDWARE]: Обнаружен А3-профиль сканера (Epson). Полный кадр.");
     }
 
-    // Запускаем высокоскоростной захват в RAM без создания файлов на диске
-    let output = Command::new("scanimage")
-        .args(["-d", device_name, "--format=tiff", "--resolution=300"])
-        .output()
-        .map_err(|e| e.to_string())?;
+    // Захват через RAII-обёртку: процесс гарантированно завершён при выходе из scope
+    let mut scanner = SaneScanner::new(device_name)?;
 
-    if !output.status.success() {
-        let err_msg = String::from_utf8_lossy(&output.stderr).to_string();
-        return Err(format!("Аппаратный сбой SANE: {}", err_msg));
-    }
+    // Переиспользуемый буфер кадров (§2.3): аллоцируется один раз на вызов
+    let mut frame_buffer: Vec<u8> = Vec::new();
+    let frame = scanner.read_frame(&mut frame_buffer)?;
 
     println!(
         "[🚀 SANE RAM]: Буфер получен. Объем: {} байт. Декодирование OpenCV...",
-        output.stdout.len()
+        frame.len()
     );
 
     // Создаем матрицу OpenCV напрямую из вектора оперативной памяти
     let mat = imgcodecs::imdecode(
-        &Mat::from_slice(&output.stdout).map_err(|e| e.to_string())?,
+        &Mat::from_slice(&frame).map_err(|e| e.to_string())?,
         imgcodecs::IMREAD_COLOR,
     )
     .map_err(|e| e.to_string())?;

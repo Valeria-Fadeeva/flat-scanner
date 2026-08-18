@@ -221,50 +221,50 @@
 
 **Исходник:** TECH_SPEC_addon_2.md (§2–§4). Безопасные RAII-обёртки вокруг SANE FFI и OpenCV, изоляция C++ исключений, геометрический валидатор перед `warp_perspective`.
 
-### U1. Расширение `DigitizationError` до контракта §4
-- [ ] Добавить варианты: `SaneError(String)`, `OpenCVPanic(String)`, `DatabaseError(#[from] rusqlite::Error)`, `IoError(#[from] std::io::Error)`
-- [ ] Сохранить существующие `InvalidPageGeometry`/`NoContourFound`/`DegenerateContour`/`OpenCv`
-- [ ] Проверить, что `#[from]`-конверсии не конфликтуют с существующими `From`-impl
+### U1. Расширение `DigitizationError` до контракта §4 ✅ ЗАВЕРШЕНО
+- [x] Добавить варианты: `SaneError(String)`, `OpenCVPanic(String)`, `DatabaseError(#[from] rusqlite::Error)`, `IoError(#[from] std::io::Error)`
+- [x] Сохранить существующие `InvalidPageGeometry`/`NoContourFound`/`DegenerateContour`/`OpenCv`
+- [x] Проверить, что `#[from]`-конверсии не конфликтуют с существующими `From`-impl
 - **Файл:** `flat-scanner-server/src/cv/mod.rs`
-- **Статус:** Не начато
+- **Статус:** Завершено
 
-### U2. RAII-обёртка `SaneScanner` (§2.1–2.2)
-- [ ] Инкапсулировать дескриптор/child-процесс `scanimage` в `struct SaneScanner { handle: *mut c_void }`
-- [ ] Реализовать `impl Drop for SaneScanner` — гарантированное закрытие (`sane_close`/wait+drop) по стандарту RAII
-- [ ] `unsafe impl Send for SaneScanner {}` + `impl !Sync for SaneScanner {}` (SANE не потокобезопасна)
-- [ ] Перевести `capture_sane_frame` на создание/использование обёртки вместо «сырого» `Command`
+### U2. RAII-обёртка `SaneScanner` (§2.1–2.2) ✅ ЗАВЕРШЕНО
+- [x] Инкапсулировать дескриптор/child-процесс `scanimage` в `struct SaneScanner { child: Option<Child> }`
+- [x] Реализовать `impl Drop for SaneScanner` — гарантированное закрытие (wait+drop) по стандарту RAII
+- [x] `unsafe impl Send for SaneScanner {}` + `impl !Sync for SaneScanner {}` (SANE не потокобезопасна)
+- [x] Перевести `capture_sane_frame` на создание/использование обёртки вместо «сырого» `Command`
 - **Файл:** `flat-scanner-server/src/sane_core.rs`
-- **Статус:** Не начато
+- **Статус:** Завершено
 - **Зависимость:** U1
 
-### U3. Переиспользуемый буфер чтения кадров (§2.3)
-- [ ] Функция чтения принимает `&mut [u8]` вместо аллокации нового `Vec<u8>` на итерацию `sane_read`
-- [ ] Буфер аллоцируется один раз и переиспользуется между кадрами (предотвращение фрагментации кучи)
+### U3. Переиспользуемый буфер чтения кадров (§2.3) ✅ ЗАВЕРШЕНО
+- [x] Функция чтения принимает `&mut Vec<u8>` вместо аллокации нового `Vec<u8>` на итерацию `sane_read`
+- [x] Буфер аллоцируется один раз и переиспользуется между кадрами (предотвращение фрагментации кучи)
 - **Файл:** `flat-scanner-server/src/sane_core.rs`
-- **Статус:** Не начато
+- **Статус:** Завершено
 - **Зависимость:** U2
 
-### U4. Геометрический валидатор `validate_page_geometry` (§3.2)
-- [ ] Выделить `pub fn validate_page_geometry(contour: &Vector<Point2f>, frame_area: f64) -> Result<(), DigitizationError>`
-- [ ] Порядок проверок: (1) `contour.len() == 4` → (2) `is_contour_convex` → (3) `contour_area >= frame_area * 0.15`
-- [ ] Вызывать ДО `warp_perspective`/`get_perspective_transform`; рефакторинг инлайн-проверок T2 на её использование
+### U4. Геометрический валидатор `validate_page_geometry` (§3.2) ✅ ЗАВЕРШЕНО
+- [x] Выделить `pub fn validate_page_geometry(contour: &Vector<Point2f>, frame_area: f64) -> Result<(), DigitizationError>`
+- [x] Порядок проверок: (1) `contour.len() == 4` → (2) `is_contour_convex` → (3) `contour_area >= frame_area * 0.15`
+- [x] Вызывать ДО `warp_perspective`/`get_perspective_transform`; рефакторинг инлайн-проверок T2 на её использование
 - **Файл:** `flat-scanner-server/src/cv/warping.rs`, `src/cv/segmentation.rs`
-- **Статус:** Не начато
+- **Статус:** Завершено
 - **Зависимость:** U1
 
-### U5. `safe_calculate_homography` (§3.1)
-- [ ] `pub fn safe_calculate_homography(src_points, dst_points) -> Result<Mat, DigitizationError>`
-- [ ] `imgproc::get_perspective_transform(...).map_err(|e| DigitizationError::OpenCVPanic(...))` — изоляция `cv::Exception`
-- [ ] Убрать `unwrap()`/`expect()`/`let _ =` из cv-конвейера (warping/segmentation)
+### U5. `safe_calculate_homography` (§3.1) ✅ ЗАВЕРШЕНО
+- [x] `pub fn safe_calculate_homography(src_points, dst_points) -> Result<Mat, DigitizationError>`
+- [x] `imgproc::get_perspective_transform(...).map_err(|e| DigitizationError::OpenCVPanic(...))` — изоляция `cv::Exception`
+- [x] Убрать `unwrap()`/`expect()`/`let _ =` из cv-конвейера (warping/segmentation)
 - **Файл:** `flat-scanner-server/src/cv/warping.rs`
-- **Статус:** Не начато
+- **Статус:** Завершено
 - **Зависимость:** U1
 
-### U6. Валидация и документация
-- [ ] `cargo check` + `cargo test` — все тесты зелёные
-- [ ] Обновить `CHANGELOG.md` (Added/Changed) и `AUDIT.md` (новые пункты §2–§4)
-- [ ] Коммит (Conventional Commits) + пуш
-- **Статус:** Не начато
+### U6. Валидация и документация ✅ ЗАВЕРШЕНО
+- [x] `cargo check` + `cargo test` — все тесты зелёные (57 passed)
+- [x] Обновить `CHANGELOG.md` (Added/Changed) и `AUDIT.md` (новые пункты §2–§4)
+- [x] Коммит (Conventional Commits) + пуш
+- **Статус:** Завершено
 - **Зависимость:** U1–U5
 
 ---

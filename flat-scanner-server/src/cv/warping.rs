@@ -7,39 +7,28 @@ use opencv::{
 
 use super::DigitizationError;
 
-/// Валидация геометрии страницы перед гомографией (TECH_SPEC_addon_1.md §1.1).
-/// Требования:
-///   - строго 4 точки (гарантируется сигнатурой, но проверяем вырожденность);
-///   - площадь контура >= 15% площади кадра;
-///   - контур выпуклый (страница — почти выпуклый объект).
-/// Возвращает типизированную ошибку InvalidPageGeometry при сбое.
-fn validate_page_geometry(src: &Mat, pts: &[Point2f]) -> Result<(), DigitizationError> {
-    if pts.len() != 4 {
+/// Геометрический валидатор контура страницы перед трансформацией перспективы
+/// (TECH_SPEC_addon_2.md §3.2). Строгий контракт: если валидация не пройдена,
+/// выполнение прерывается на уровне Rust, не допуская вызова Си-функций OpenCV.
+///
+/// Порядок проверок:
+///   1. Количество опорных точек — строго четырёхугольник (4).
+///   2. Геометрическая выпуклость фигуры (`is_contour_convex`).
+///   3. Площадь контура — минимум 15% от общей площади матрицы сканера.
+pub fn validate_page_geometry(contour: &Vector<Point2f>, frame_area: f64) -> Result<(), DigitizationError> {
+    // 1. Проверка количества опорных точек (строго четырёхугольник)
+    if contour.len() != 4 {
         return Err(DigitizationError::InvalidPageGeometry(format!(
-            "ожидается строго 4 вершины страницы, получено {}",
-            pts.len()
+            "Контур содержит {} точек вместо строго 4",
+            contour.len()
         )));
     }
 
-    // Площадь контура по формуле площади многоугольника (shoelace)
-    let mut area = 0.0_f32;
-    for i in 0..4 {
-        let a = pts[i];
-        let b = pts[(i + 1) % 4];
-        area += a.x * b.y - b.x * a.y;
-    }
-    let contour_area = area.abs() / 2.0;
+    // Оперативная копия точек для индексации (Vector<Point2f> не реализует Index)
+    let pts: Vec<Point2f> = contour.to_vec();
 
-    let frame_area = src.rows() as f32 * src.cols() as f32;
-    if frame_area <= 0.0 || contour_area < frame_area * 0.15 {
-        return Err(DigitizationError::InvalidPageGeometry(format!(
-            "площадь контура {:.1} px² ниже порога 15% кадра ({:.1} px²)",
-            contour_area,
-            frame_area * 0.15
-        )));
-    }
-
-    // Выпуклость: все поворотные векторы имеют одинаковый знак кривизны
+    // 2. Проверка геометрической выпуклости фигуры (convexity):
+    // все поворотные векторы контура имеют одинаковый знак кривизны
     let mut cross_sign: i32 = 0;
     for i in 0..4 {
         let o = pts[i];
@@ -52,25 +41,59 @@ fn validate_page_geometry(src: &Mat, pts: &[Point2f]) -> Result<(), Digitization
                 cross_sign = sign;
             } else if cross_sign != sign {
                 return Err(DigitizationError::InvalidPageGeometry(
-                    "контур страницы не выпуклый".to_string(),
+                    "Обнаружен вогнутый или самопересекающийся контур страницы".to_string(),
                 ));
             }
         }
     }
 
+    // 3. Проверка площади контура (минимум 15% от общей площади матрицы сканера)
+    // по формуле площади многоугольника (shoelace)
+    let mut area = 0.0_f32;
+    for i in 0..4 {
+        let a = pts[i];
+        let b = pts[(i + 1) % 4];
+        area += a.x * b.y - b.x * a.y;
+    }
+    let contour_area = area.abs() / 2.0;
+
+    if (contour_area as f64) < frame_area * 0.15 {
+        let contour_area = contour_area as f64;
+        return Err(DigitizationError::InvalidPageGeometry(format!(
+            "Площадь контура ({:.2}) меньше критического порога в 15% от кадра",
+            contour_area
+        )));
+    }
+
     Ok(())
+}
+
+/// Безопасный расчёт матрицы гомографии с изоляцией C++ исключений
+/// (TECH_SPEC_addon_2.md §3.1). Метод возвращает Result<Mat, DigitizationError>,
+/// перехватывая cv::Exception из `get_perspective_transform`.
+pub fn safe_calculate_homography(
+    src_points: &Vector<Point2f>,
+    dst_points: &Vector<Point2f>,
+) -> Result<Mat, DigitizationError> {
+    geometry::get_perspective_transform(src_points, dst_points, DECOMP_LU).map_err(|opencv_err| {
+        DigitizationError::OpenCVPanic(format!(
+            "OpenCV C++ Exception во время расчета гомографии: {}",
+            opencv_err
+        ))
+    })
 }
 
 /// WarpPerspective: привести страницу к прямоугольному виду по вершинам P₁..P₄.
 /// Выход — изображение заданного размера (target_size).
 pub fn perspective_warp(src: &Mat, p1: Point2f, p2: Point2f, p3: Point2f, p4: Point2f, target_size: Size) -> Result<Mat, DigitizationError> {
-    let pts = [p1, p2, p3, p4];
-    validate_page_geometry(src, &pts)?;
-
     let mut src_pts_vec = Vector::<Point2f>::new();
-    for p in pts {
+    for p in [p1, p2, p3, p4] {
         src_pts_vec.push(p);
     }
+
+    // Строгий геометрический контракт ДО вызова Си-функций OpenCV (§3.2)
+    let frame_area = src.rows() as f64 * src.cols() as f64;
+    validate_page_geometry(&src_pts_vec, frame_area)?;
 
     let mut dst_pts_vec = Vector::<Point2f>::new();
     dst_pts_vec.push(Point2f::new(0.0, 0.0));
@@ -78,8 +101,7 @@ pub fn perspective_warp(src: &Mat, p1: Point2f, p2: Point2f, p3: Point2f, p4: Po
     dst_pts_vec.push(Point2f::new(target_size.width as f32, target_size.height as f32));
     dst_pts_vec.push(Point2f::new(0.0, target_size.height as f32));
 
-    let m = geometry::get_perspective_transform(&src_pts_vec, &dst_pts_vec, DECOMP_LU)
-        .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
+    let m = safe_calculate_homography(&src_pts_vec, &dst_pts_vec)?;
 
     let mut warped = Mat::default();
     imgproc::warp_perspective(
