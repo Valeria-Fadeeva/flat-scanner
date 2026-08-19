@@ -14,6 +14,16 @@ use tokio::sync::mpsc;
 
 use crate::session_store::{BookStatus, SessionStore, SpreadStatus};
 
+/// L5: Максимальное количество попыток повторной отправки задачи
+const MAX_RETRIES: usize = 3;
+
+/// L5: Задача с метаданными для обработки ошибок
+#[derive(Debug)]
+struct TaskWithMetadata {
+    task: WriteTask,
+    retries: usize,
+}
+
 /// Задача записи в БД
 #[derive(Debug)]
 pub enum WriteTask {
@@ -62,42 +72,77 @@ pub fn spawn_writer(store: Arc<Mutex<SessionStore>>) {
     // Запускаем единственный воркер записи
     tokio::spawn(async move {
         while let Some(task) = rx.recv().await {
-            let result = match &task {
-                WriteTask::UpdateSpreadVertices {
-                    spread_id,
-                    left_vertices,
-                    right_vertices,
-                } => store
-                    .lock()
-                    .ok()
-                    .and_then(|mut s| s.update_spread_vertices(*spread_id, left_vertices, right_vertices).ok()),
-                WriteTask::UpdateSpreadStatus { spread_id, status } => store
-                    .lock()
-                    .ok()
-                    .and_then(|s| s.update_spread_status(*spread_id, *status).ok()),
-                WriteTask::UpdateSpreadPaths {
-                    spread_id,
-                    left_path,
-                    right_path,
-                } => store
-                    .lock()
-                    .ok()
-                    .and_then(|s| s.update_spread_paths(*spread_id, left_path, right_path).ok()),
-                WriteTask::UpdateBookStatus { book_uuid, status } => store
-                    .lock()
-                    .ok()
-                    .and_then(|s| s.update_book_status(book_uuid, *status).ok()),
-                WriteTask::UpdateBookTotalPages { book_uuid, total_pages } => store
-                    .lock()
-                    .ok()
-                    .and_then(|s| s.update_book_total_pages(book_uuid, *total_pages).ok()),
+            let metadata = TaskWithMetadata {
+                task,
+                retries: 0,
             };
-
-            if result.is_none() {
-                eprintln!("[✍️ WRITE QUEUE]: Ошибка записи в SQLite");
-            }
+            
+            // L5: Обработка задачи с ретраями
+            process_task_with_retries(&store, metadata).await;
         }
     });
+}
+
+/// L5: Обработка задачи с ретраями
+async fn process_task_with_retries(store: &Arc<Mutex<SessionStore>>, mut metadata: TaskWithMetadata) {
+    loop {
+        let result = match &metadata.task {
+            WriteTask::UpdateSpreadVertices {
+                spread_id,
+                left_vertices,
+                right_vertices,
+            } => store
+                .lock()
+                .ok()
+                .and_then(|mut s| s.update_spread_vertices(*spread_id, left_vertices, right_vertices).ok()),
+            WriteTask::UpdateSpreadStatus { spread_id, status } => store
+                .lock()
+                .ok()
+                .and_then(|s| s.update_spread_status(*spread_id, *status).ok()),
+            WriteTask::UpdateSpreadPaths {
+                spread_id,
+                left_path,
+                right_path,
+            } => store
+                .lock()
+                .ok()
+                .and_then(|s| s.update_spread_paths(*spread_id, left_path, right_path).ok()),
+            WriteTask::UpdateBookStatus { book_uuid, status } => store
+                .lock()
+                .ok()
+                .and_then(|s| s.update_book_status(book_uuid, *status).ok()),
+            WriteTask::UpdateBookTotalPages { book_uuid, total_pages } => store
+                .lock()
+                .ok()
+                .and_then(|s| s.update_book_total_pages(book_uuid, *total_pages).ok()),
+        };
+
+        if result.is_some() {
+            return; // Успешная запись
+        }
+
+        // L5: Ошибка записи — проверяем лимит ретраев
+        metadata.retries += 1;
+        if metadata.retries >= MAX_RETRIES {
+            eprintln!(
+                "[✍️ WRITE QUEUE]: Критическая ошибка: задача {:?} не выполнена после {} попыток. Задача отклонена.",
+                metadata.task,
+                metadata.retries
+            );
+            return;
+        }
+
+        eprintln!(
+            "[✍️ WRITE QUEUE]: Ошибка записи (попытка {}/{}): {:?}",
+            metadata.retries,
+            MAX_RETRIES,
+            metadata.task
+        );
+
+        // L5: Экспоненциальная задержка перед повтором
+        let delay_ms = 100 * (2u64.pow(metadata.retries as u32));
+        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+    }
 }
 
 /// Отправляет задачу в очередь записи.

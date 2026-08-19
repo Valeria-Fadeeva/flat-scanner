@@ -7,7 +7,7 @@ pkgrel=1
 pkgdesc="Native flat-bed scanner client desktop UI for Melawy OS (Flutter)"
 arch=('x86_64')
 url="https://github.com/Valeria-Fadeeva/flat-scanner"
-license=('MIT')
+license=('AGPL-3.0-only')
 depends=(
   'glibc'
   'gtk3'
@@ -41,7 +41,7 @@ build() {
 }
 
 package() {
-  cd "${srcdir}/flat-scanner-${pkgver}/flat-scanner-client-flutter"
+  cd "${srcdir}/flat-scanner-${pkgver}/flat-scanner-client"
 
   local _destdir="${pkgdir}/usr/lib/${pkgname}"
   install -d "${_destdir}"

@@ -16,6 +16,8 @@ const TIFFTAG_BITSPERSAMPLE: u32 = 258;
 const TIFFTAG_COMPRESSION: u32 = 259;
 const TIFFTAG_PHOTOMETRIC: u32 = 262;
 const TIFFTAG_FILLORDER: u32 = 266;
+const TIFFTAG_SOFTWARE: u32 = 305;
+const TIFFTAG_PAGENUMBER: u32 = 315;
 
 const COMPRESSION_CCITTFAX4: u16 = 4; // CCITT Group 4
 const PHOTOMETRIC_MINISBLACK: u16 = 1; // 0 = чёрный (текст)
@@ -124,6 +126,19 @@ pub fn encode_ccitt_g4_to_file(src: &Mat, path: &str) -> Result<usize, String> {
         if !ok(TIFFSetField(tif, TIFFTAG_FILLORDER, FILLORDER_MSB2LSB as c_uint)) {
             TIFFClose(tif);
             return Err("Не удалось установить FillOrder=MSB2LSB".to_string());
+        }
+
+        // C2: Добавление обязательных TIFF-тегов
+        let software = std::ffi::CString::new("flat-scanner-server/1.0").unwrap();
+        if !ok(TIFFSetField(tif, TIFFTAG_SOFTWARE, software.as_ptr())) {
+            TIFFClose(tif);
+            return Err("Не удалось установить Software".to_string());
+        }
+
+        let page_number = std::ffi::CString::new("1/1").unwrap();
+        if !ok(TIFFSetField(tif, TIFFTAG_PAGENUMBER, page_number.as_ptr())) {
+            TIFFClose(tif);
+            return Err("Не удалось установить PageNumber".to_string());
         }
 
         // 6. Запись scanlines

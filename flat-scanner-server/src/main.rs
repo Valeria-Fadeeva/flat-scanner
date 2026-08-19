@@ -20,6 +20,7 @@ use std::fs;
 use std::net::SocketAddr;
 use std::path::Path;
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::limit::RequestBodyLimitLayer;
 
 mod config; // Конфигурация bind-адреса (host/port)
 mod cv;
@@ -87,6 +88,14 @@ struct ScanResponse {
 async fn main() -> Result<(), String> {
     let args = CliArgs::parse();
 
+    // C1: Инициализация путей к каталогам (валидация при старте)
+    for dir in ["./split", "./export", "./import"] {
+        if let Err(e) = fs::create_dir_all(dir) {
+            return Err(format!("Не удалось создать каталог {}: {}", dir, e));
+        }
+    }
+    println!("[📁 PATHS]: Каталоги инициализированы");
+
     // D1: Инициализация Session Store (SQLite)
     let db_path = "./data.db";
     let session_store = session_store::global_session_store(db_path);
@@ -152,6 +161,10 @@ async fn main() -> Result<(), String> {
         .allow_headers(Any);
     let page_processor = std::sync::Arc::new(pipeline::PageProcessor::new("./split".to_string()));
 
+    // M4: Лимит на размер загружаемого изображения (50MB)
+    // Предотвращает memory exhaustion при загрузке слишком больших файлов
+    let body_limit = RequestBodyLimitLayer::new(50 * 1024 * 1024);
+
     let app = Router::new()
         .route("/api/v1/health", get(health_check))
         .route("/api/v1/scanner/init", post(initialize_sane))
@@ -166,6 +179,7 @@ async fn main() -> Result<(), String> {
         .route("/api/v1/insert-pdf-page", post(insert_pdf_page))
         .route("/api/v1/clean-pdf-page", post(clean_pdf_page))
         .layer(Extension(page_processor))
+        .layer(body_limit)
         .layer(cors);
 
     let addr: SocketAddr = cfg.bind_addr().parse().unwrap();

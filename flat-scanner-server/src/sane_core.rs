@@ -1,6 +1,13 @@
 use opencv::{core::Mat, imgcodecs, prelude::*};
 use std::io::Read;
 use std::process::{Child, Command, Stdio};
+use std::time::Duration;
+
+/// L4: Таймауты для SANE-операций
+///
+/// Предотвращает бесконечную блокировку при зависшем сканере.
+const SANE_TIMEOUT: Duration = Duration::from_secs(30);
+const SANE_DETECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// RAII-обёртка над child-процессом `scanimage` (TECH_SPEC_addon_2.md §2.1–2.2).
 /// Гарантирует корректное завершение процесса и сбор stdout при выходе из области
@@ -56,14 +63,45 @@ impl Drop for SaneScanner {
     }
 }
 
+/// L4: Выполнение команды с таймаутом
+///
+/// Запускает команду в отдельном потоке и ожидает результат с таймаутом.
+fn run_with_timeout<F, T>(timeout: Duration, op_name: &str, f: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    std::thread::spawn(move || {
+        let result = f();
+        let _ = tx.send(result);
+    });
+
+    match rx.recv_timeout(timeout) {
+        Ok(result) => result,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            Err(format!("Таймаут операции '{}' ({} сек)", op_name, timeout.as_secs()))
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            Err(format!("Поток '{}' аварийно завершён", op_name))
+        }
+    }
+}
+
 /// Динамический автоматический поиск реального сканера на USB-шине Linux
+///
+/// L4: Обёрнуто в таймаут для предотвращения бесконечной блокировки.
 pub fn detect_hardware_scanner() -> Result<String, String> {
     println!("[⚙️ HARDWARE]: Динамический опрос шины SANE...");
 
-    let output = Command::new("scanimage")
-        .arg("-L")
-        .output()
-        .map_err(|e| e.to_string())?;
+    // L4: Таймаут на обнаружение сканера
+    let output = run_with_timeout(SANE_DETECT_TIMEOUT, "обнаружение сканера", || {
+        Command::new("scanimage")
+            .arg("-L")
+            .output()
+            .map_err(|e| e.to_string())
+    })?;
 
     if !output.status.success() {
         return Err("Не удалось выполнить команду scanimage -L".to_string());
@@ -118,12 +156,16 @@ pub fn capture_sane_frame(device_name: &str) -> Result<Mat, String> {
         println!("[📐 HARDWARE]: Обнаружен А3-профиль сканера (Epson). Полный кадр.");
     }
 
-    // Захват через RAII-обёртку: процесс гарантированно завершён при выходе из scope
-    let mut scanner = SaneScanner::new(device_name)?;
+    // L4: Таймаут на захват кадра
+    let device_name_owned = device_name.to_string();
+    let frame = run_with_timeout(SANE_TIMEOUT, "захват кадра", move || {
+        // Захват через RAII-обёртку: процесс гарантированно завершён при выходе из scope
+        let mut scanner = SaneScanner::new(&device_name_owned)?;
 
-    // Переиспользуемый буфер кадров (§2.3): аллоцируется один раз на вызов
-    let mut frame_buffer: Vec<u8> = Vec::new();
-    let frame = scanner.read_frame(&mut frame_buffer)?;
+        // Переиспользуемый буфер кадров (§2.3): аллоцируется один раз на вызов
+        let mut frame_buffer: Vec<u8> = Vec::new();
+        scanner.read_frame(&mut frame_buffer)
+    })?;
 
     println!(
         "[🚀 SANE RAM]: Буфер получен. Объем: {} байт. Декодирование OpenCV...",

@@ -211,7 +211,7 @@ impl SessionStore {
             .map_err(|e| format!("Ошибка включения FK: {}", e))?;
 
         // Создаём схему БД
-        let store = Self {
+        let mut store = Self {
             conn,
             db_path: db_path.to_string(),
         };
@@ -222,42 +222,106 @@ impl SessionStore {
     }
 
     /// Создаёт схему БД (таблицы books и spreads)
-    fn create_schema(&self) -> Result<(), String> {
-        let schema = r#"
-            CREATE TABLE IF NOT EXISTS books (
-                uuid TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                start_date TEXT NOT NULL,
-                total_pages INTEGER DEFAULT 0,
-                status TEXT NOT NULL DEFAULT 'in_progress',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
+    fn create_schema(&mut self) -> Result<(), String> {
+        // M3: Система миграций БД
+        self.run_migrations()?;
+        Ok(())
+    }
 
-            CREATE TABLE IF NOT EXISTS spreads (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                book_uuid TEXT NOT NULL,
-                spread_index INTEGER NOT NULL,
-                left_path TEXT,
-                right_path TEXT,
-                left_vertices TEXT,
-                right_vertices TEXT,
-                threshold_k REAL,
-                status TEXT NOT NULL DEFAULT 'pending',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                FOREIGN KEY (book_uuid) REFERENCES books(uuid) ON DELETE CASCADE,
-                UNIQUE(book_uuid, spread_index)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_books_status ON books(status);
-            CREATE INDEX IF NOT EXISTS idx_spreads_book ON spreads(book_uuid);
-            CREATE INDEX IF NOT EXISTS idx_spreads_status ON spreads(status);
-        "#;
-
+    /// M3: Система миграций БД
+    ///
+    /// Применяет миграции по порядку, отслеживая текущую версию схемы.
+    /// Каждая миграция — атомарная транзакция.
+    fn run_migrations(&mut self) -> Result<(), String> {
+        // Создаём таблицу версий схемы
         self.conn
-            .execute_batch(schema)
-            .map_err(|e| format!("Ошибка создания схемы: {}", e))?;
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS schema_version (
+                    version INTEGER PRIMARY KEY,
+                    applied_at TEXT NOT NULL
+                );",
+            )
+            .map_err(|e| format!("Ошибка создания schema_version: {}", e))?;
+
+        // Получаем текущую версию схемы
+        let current_version: i64 = self
+            .conn
+            .query_row(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_version",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("Ошибка чтения версии схемы: {}", e))?;
+
+        // Список миграций: (version, description, sql)
+        let migrations: Vec<(i64, &str, &str)> = vec![
+            (
+                1,
+                "Initial schema: books and spreads tables",
+                r#"
+                CREATE TABLE IF NOT EXISTS books (
+                    uuid TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    start_date TEXT NOT NULL,
+                    total_pages INTEGER DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'in_progress',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS spreads (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    book_uuid TEXT NOT NULL,
+                    spread_index INTEGER NOT NULL,
+                    left_path TEXT,
+                    right_path TEXT,
+                    left_vertices TEXT,
+                    right_vertices TEXT,
+                    threshold_k REAL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (book_uuid) REFERENCES books(uuid) ON DELETE CASCADE,
+                    UNIQUE(book_uuid, spread_index)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_books_status ON books(status);
+                CREATE INDEX IF NOT EXISTS idx_spreads_book ON spreads(book_uuid);
+                CREATE INDEX IF NOT EXISTS idx_spreads_status ON spreads(status);
+                "#,
+            ),
+            // Новые миграции добавляются сюда:
+            // (2, "Add error_message to spreads", "ALTER TABLE spreads ADD COLUMN error_message TEXT;"),
+        ];
+
+        // Применяем миграции по порядку
+        for (version, description, sql) in migrations {
+            if version <= current_version {
+                continue; // Уже применено
+            }
+
+            println!("[📦 MIGRATION]: Применяю v{}: {}", version, description);
+
+            let tx = self
+                .conn
+                .transaction()
+                .map_err(|e| format!("Ошибка транзакции миграции v{}: {}", version, e))?;
+
+            tx.execute_batch(sql)
+                .map_err(|e| format!("Ошибка применения миграции v{}: {}", version, e))?;
+
+            let now = chrono_now();
+            tx.execute(
+                "INSERT INTO schema_version (version, applied_at) VALUES (?1, ?2)",
+                params![version, now],
+            )
+            .map_err(|e| format!("Ошибка записи версии v{}: {}", version, e))?;
+
+            tx.commit()
+                .map_err(|e| format!("Ошибка commit миграции v{}: {}", version, e))?;
+
+            println!("[✅ MIGRATION]: v{} применена успешно", version);
+        }
 
         Ok(())
     }

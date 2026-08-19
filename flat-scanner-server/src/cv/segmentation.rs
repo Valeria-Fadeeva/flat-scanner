@@ -65,7 +65,7 @@ fn coarse_mask(src: &Mat) -> Result<Mat, DigitizationError> {
             &mut gray,
             imgproc::COLOR_BGR2GRAY,
             0,
-            core::AlgorithmHint::ALGO_HINT_APPROX,
+            core::AlgorithmHint::ALGO_HINT_DEFAULT,
         )
         .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
     } else {
@@ -88,7 +88,7 @@ fn coarse_mask(src: &Mat) -> Result<Mat, DigitizationError> {
             0.0,
             0.0,
             BORDER_DEFAULT,
-            core::AlgorithmHint::ALGO_HINT_APPROX,
+            core::AlgorithmHint::ALGO_HINT_DEFAULT,
         )
         .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
@@ -222,7 +222,7 @@ fn isolate_side_artifacts(
             &mut gray_band,
             imgproc::COLOR_BGR2GRAY,
             0,
-            core::AlgorithmHint::ALGO_HINT_APPROX,
+            core::AlgorithmHint::ALGO_HINT_DEFAULT,
         )
         .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
     } else {
@@ -314,7 +314,7 @@ pub fn process_book_contours(src: &Mat) -> Result<PageVertices, DigitizationErro
             &mut gray,
             imgproc::COLOR_BGR2GRAY,
             0,
-            core::AlgorithmHint::ALGO_HINT_APPROX,
+            core::AlgorithmHint::ALGO_HINT_DEFAULT,
         )
         .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
     } else {
@@ -455,7 +455,7 @@ pub fn detect_skew_angle(src: &Mat) -> Result<f64, DigitizationError> {
             &mut gray,
             imgproc::COLOR_BGR2GRAY,
             0,
-            core::AlgorithmHint::ALGO_HINT_APPROX,
+            core::AlgorithmHint::ALGO_HINT_DEFAULT,
         )
         .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
     } else {
@@ -575,7 +575,7 @@ fn crop_to_content(src: &Mat) -> Result<Mat, DigitizationError> {
             &mut gray,
             imgproc::COLOR_BGR2GRAY,
             0,
-            core::AlgorithmHint::ALGO_HINT_APPROX,
+            core::AlgorithmHint::ALGO_HINT_DEFAULT,
         )
         .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
     } else {

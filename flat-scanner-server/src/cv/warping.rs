@@ -112,7 +112,7 @@ pub fn perspective_warp(src: &Mat, p1: Point2f, p2: Point2f, p3: Point2f, p4: Po
         imgproc::INTER_LINEAR,
         BORDER_TRANSPARENT,
         core::Scalar::default(),
-        core::AlgorithmHint::ALGO_HINT_APPROX,
+        core::AlgorithmHint::ALGO_HINT_DEFAULT,
     )
     .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
@@ -125,17 +125,25 @@ fn detect_spine_shadow(gray: &Mat) -> Option<(f32, f32)> {
     let width = gray.cols() as usize;
     let height = gray.rows() as usize;
 
-    // Прямой доступ к пикселям для вертикального усреднения
-    let data = unsafe { std::slice::from_raw_parts(gray.data() as *const u8, width * height) };
+    // M2: Оптимизация через OpenCV reduce вместо ручного цикла
+    let mut profile_mat = Mat::default();
+    opencv::core::reduce(
+        gray,
+        &mut profile_mat,
+        1, // reduce по строкам (вертикальное усреднение)
+        opencv::core::CV_32F,
+        opencv::core::REDUCE_AVG,
+    )
+    .map_err(|e| {
+        eprintln!("Ошибка reduce: {}", e);
+    })
+    .ok()?;
 
-    // Вертикальное усреднение для получения профиля яркости по X
+    // Извлекаем профиль из Mat
     let mut profile = vec![0.0_f32; width];
-    for x in 0..width {
-        let mut sum = 0.0_f32;
-        for y in 0..height {
-            sum += data[y * width + x] as f32;
-        }
-        profile[x] = sum / height as f32;
+    unsafe {
+        let data = std::slice::from_raw_parts(profile_mat.data() as *const f32, width);
+        profile.copy_from_slice(data);
     }
 
     // Вычисление градиента яркости
@@ -209,7 +217,7 @@ pub fn dewarp_spine(src: &Mat) -> Result<Mat, DigitizationError> {
             &mut gray,
             imgproc::COLOR_BGR2GRAY,
             0,
-            opencv::core::AlgorithmHint::ALGO_HINT_APPROX,
+            opencv::core::AlgorithmHint::ALGO_HINT_DEFAULT,
         )
         .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
     } else {
@@ -341,7 +349,7 @@ pub fn dewarp_spine(src: &Mat) -> Result<Mat, DigitizationError> {
         imgproc::INTER_CUBIC,
         BORDER_DEFAULT,
         core::Scalar::default(),
-        core::AlgorithmHint::ALGO_HINT_APPROX,
+        core::AlgorithmHint::ALGO_HINT_DEFAULT,
     )
     .map_err(|e| DigitizationError::OpenCv(e.to_string()))?;
 
