@@ -8,6 +8,7 @@ use axum::{
     extract::Query,
     http::StatusCode,
     routing::{get, patch, post},
+    Extension,
 };
 
 use clap::Parser;
@@ -29,6 +30,7 @@ mod session_recovery; // Горячий рестарт сессии
 mod session_store; // Транзакционное хранение сессий сканирования
 mod write_queue; // Single Writer + FIFO-очередь (§1.3)
 mod pipeline; // Сквозной скоростной пайплайн (TECH_SPEC_addon_3.md §J)
+mod routes; // Axum HTTP API routes (TECH_SPEC_addon_4.md)
 
 /// ТЗ ПК "Канонисса-Библиотека" v1.0 — Двухрежимное ядро (Web / CLI)
 #[derive(Parser, Debug)]
@@ -148,10 +150,13 @@ async fn main() -> Result<(), String> {
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
+    let page_processor = std::sync::Arc::new(pipeline::PageProcessor::new("./split".to_string()));
+
     let app = Router::new()
         .route("/api/v1/health", get(health_check))
         .route("/api/v1/scanner/init", post(initialize_sane))
         .route("/api/v1/scanner/process", post(process_scan_frame))
+        .route("/api/v1/scan", post(routes::handle_scan))
         .route("/api/v1/calibration", get(get_calibration))
         .route("/api/v1/calibration", post(update_calibration))
         .route("/api/v1/scan/{uuid}/adjust-vertex", patch(adjust_vertex))
@@ -160,6 +165,7 @@ async fn main() -> Result<(), String> {
         .route("/api/v1/replace-pdf-page", post(replace_pdf_page))
         .route("/api/v1/insert-pdf-page", post(insert_pdf_page))
         .route("/api/v1/clean-pdf-page", post(clean_pdf_page))
+        .layer(Extension(page_processor))
         .layer(cors);
 
     let addr: SocketAddr = cfg.bind_addr().parse().unwrap();
