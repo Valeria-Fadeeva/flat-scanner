@@ -18,23 +18,23 @@ class ScannerInitial extends ScannerState {
 }
 
 /// Идёт захват/обработка разворота.
-class Scanning extends ScannerState {
-  const Scanning();
+class ScannerScanning extends ScannerState {
+  const ScannerScanning();
 }
 
 /// Разворот обработан, вершины получены.
-class ScanSuccess extends ScannerState {
+class ScannerSuccess extends ScannerState {
   final ScanResponse response;
-  const ScanSuccess(this.response);
+  const ScannerSuccess(this.response);
 
   @override
   List<Object?> get props => [response];
 }
 
 /// Ошибка (сервер недоступен, ошибка обработки).
-class ScanError extends ScannerState {
+class ScannerError extends ScannerState {
   final String message;
-  const ScanError(this.message);
+  const ScannerError(this.message);
 
   @override
   List<Object?> get props => [message];
@@ -75,7 +75,7 @@ class ScannerBloc extends Bloc<ScannerEvent, ScannerState> {
     StartScan event,
     Emitter<ScannerState> emit,
   ) async {
-    emit(Scanning());
+    emit(ScannerScanning());
     try {
       // Инициализация каретки (если ещё не инициализирована)
       await _api.initScanner();
@@ -87,11 +87,11 @@ class ScannerBloc extends Bloc<ScannerEvent, ScannerState> {
         uuid: uuid,
         profile: event.profile,
       );
-      emit(ScanSuccess(response));
+      emit(ScannerSuccess(response));
     } on ApiException catch (e) {
-      emit(ScanError(e.message));
+      emit(ScannerError(e.message));
     } catch (e) {
-      emit(ScanError('Сервер недоступен: $e'));
+      emit(ScannerError('Сервер недоступен: $e'));
     }
   }
 

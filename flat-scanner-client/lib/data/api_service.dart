@@ -150,7 +150,7 @@ class ApiService {
       body: jsonEncode({
         'input_pdf': inputPdf,
         'dpi': dpi,
-        'output_dir': ?outputDir,
+        if (outputDir != null) 'output_dir': outputDir,
       }),
     );
     if (res.statusCode != 200) {
@@ -177,7 +177,7 @@ class ApiService {
         'input_pdf': inputPdf,
         'page_index': pageIndex,
         'replacement_image': replacementImage,
-        'output_pdf': ?outputPdf,
+        if (outputPdf != null) 'output_pdf': outputPdf,
       }),
     );
     if (res.statusCode != 200) {
@@ -204,7 +204,7 @@ class ApiService {
         'input_pdf': inputPdf,
         'after_index': afterIndex,
         'image_path': imagePath,
-        'output_pdf': ?outputPdf,
+        if (outputPdf != null) 'output_pdf': outputPdf,
       }),
     );
     if (res.statusCode != 200) {

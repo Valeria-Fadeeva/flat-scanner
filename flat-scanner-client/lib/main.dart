@@ -45,6 +45,7 @@ class FlatScannerApp extends StatelessWidget {
       providers: [
         RepositoryProvider<ApiService>(
           create: (_) => ApiService(),
+          dispose: (api) => api.dispose(),
         ),
         BlocProvider(
           create: (context) => ScannerBloc(context.read<ApiService>()),

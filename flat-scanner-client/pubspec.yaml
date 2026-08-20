@@ -40,7 +40,6 @@ dependencies:
   equatable: ^2.1.0
   window_manager: ^0.5.2
   gtk: ^2.2.0
-  args: ^2.7.0
 
 dev_dependencies:
   flutter_test:

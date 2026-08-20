@@ -97,10 +97,10 @@ class ThemeService {
     }
   }
 
-  /// Парсит цвет в формате `#RRGGBB` или `#AARRGGBB`.
+  /// Парсит цвет в формате `#RRGGBB`, `#AARRGGBB`, `RRGGBB` или `AARRGGBB`.
   Color _parseColor(String? hex, Color fallback) {
     if (hex == null) return fallback;
-    var value = hex.replaceAll('#', '');
+    var value = hex.replaceAll('#', '').trim();
     if (value.length == 6) value = 'FF$value';
     if (value.length != 8) return fallback;
 

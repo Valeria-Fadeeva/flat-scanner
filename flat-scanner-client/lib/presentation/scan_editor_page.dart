@@ -95,7 +95,7 @@ class _ScanEditorPageState extends State<ScanEditorPage> {
             // Кнопка сканирования
             BlocBuilder<ScannerBloc, ScannerState>(
               builder: (context, state) {
-                if (state is Scanning) {
+                if (state is ScannerScanning) {
                   return const Row(
                     children: [
                       SizedBox(
@@ -123,11 +123,11 @@ class _ScanEditorPageState extends State<ScanEditorPage> {
             Expanded(
               child: BlocBuilder<ScannerBloc, ScannerState>(
                 builder: (context, state) {
-                  if (state is ScanSuccess) {
+                  if (state is ScannerSuccess) {
                     _lastUuid = state.response.uuid;
                     return _ScanResultCard(response: state.response);
                   }
-                  if (state is ScanError) {
+                  if (state is ScannerError) {
                     return _ErrorCard(message: state.message);
                   }
                   return Center(

@@ -28,7 +28,7 @@ sha256sums=('SKIP'
             'SKIP')
 
 build() {
-  cd "${srcdir}/flat-scanner-${pkgver}/flat-scanner-client-flutter"
+  cd "${srcdir}/flat-scanner-${pkgver}/flat-scanner-client"
 
   # Гарантируем, что сборка под Linux десктоп активирована во внутреннем конфиге Flutter
   flutter config --enable-linux-desktop

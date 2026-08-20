@@ -23,9 +23,12 @@ class PageVertices extends Equatable {
   const PageVertices({required this.vertices});
 
   factory PageVertices.fromJson(Map<String, dynamic> json) => PageVertices(
-        vertices: (json['vertices'] as List<dynamic>)
-            .map((e) => PageVertex.fromJson(e as Map<String, dynamic>))
-            .toList(),
+        vertices: [
+          PageVertex.fromJson(json['p1'] as Map<String, dynamic>),
+          PageVertex.fromJson(json['p2'] as Map<String, dynamic>),
+          PageVertex.fromJson(json['p3'] as Map<String, dynamic>),
+          PageVertex.fromJson(json['p4'] as Map<String, dynamic>),
+        ],
       );
 
   @override
