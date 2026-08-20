@@ -31,7 +31,6 @@ mod session_recovery; // Горячий рестарт сессии
 mod session_store; // Транзакционное хранение сессий сканирования
 mod write_queue; // Single Writer + FIFO-очередь (§1.3)
 mod pipeline; // Сквозной скоростной пайплайн (TECH_SPEC_addon_3.md §J)
-mod routes; // Axum HTTP API routes (TECH_SPEC_addon_4.md)
 
 /// ТЗ ПК "Канонисса-Библиотека" v1.0 — Двухрежимное ядро (Web / CLI)
 #[derive(Parser, Debug)]
@@ -169,7 +168,6 @@ async fn main() -> Result<(), String> {
         .route("/api/v1/health", get(health_check))
         .route("/api/v1/scanner/init", post(initialize_sane))
         .route("/api/v1/scanner/process", post(process_scan_frame))
-        .route("/api/v1/scan", post(routes::handle_scan))
         .route("/api/v1/calibration", get(get_calibration))
         .route("/api/v1/calibration", post(update_calibration))
         .route("/api/v1/scan/{uuid}/adjust-vertex", patch(adjust_vertex))
