@@ -35,7 +35,7 @@
 ## Этап C: Flutter Desktop клиент (MEDIUM-HIGH)
 
 ### C1. Генерация проекта Flutter ✅ ЗАВЕРШЕНО
-- [x] Создать проект Flutter Linux desktop (`flat-scanner-client-flutter/`)
+- [x] Создать проект Flutter Linux desktop (`flat-scanner-client/`)
 - [x] Настроить маршрутизацию HTTP к Axum API (настраиваемый host/port)
 - [x] Подключить крейты http/bloc/flutter_bloc/equatable/window_manager
 - [x] Настроить структуру lib/{presentation/domain/data}
@@ -45,7 +45,7 @@
 - [x] Реализовать ScannerState (Initial, Scanning, Success, Error)
 - [x] Настроить потоковую обработку через BlocProvider
 - [x] Интегрировать POST запросы к Axum API
-- **Файл:** `flat-scanner-client-flutter/lib/domain/scanner_bloc.dart`
+- **Файл:** `flat-scanner-client/lib/domain/scanner_bloc.dart`
 - **Статус:** flutter analyze OK, flutter build linux --release OK
 
 ### C3. UI редактора сканирования ✅ ЗАВЕРШЕНО
@@ -62,7 +62,7 @@
 - [x] Интегрировать GestureDetector.onPanStart/onPanUpdate/onPanEnd
 - [x] Отправка PATCH запросов к Axum API для корректировки вершин (adjust-vertex, G2)
 - [x] ApiService вынесен в RepositoryProvider (main.dart), доступен виджетам
-- **Файл:** `flat-scanner-client-flutter/lib/presentation/vertex_editor.dart`
+- **Файл:** `flat-scanner-client/lib/presentation/vertex_editor.dart`
 - **Статус:** Реализовано, подключено в `_ScanResultCard` (scan_editor_page.dart), flutter analyze OK
 - **Зависимость:** G2 (endpoint adjust-vertex)
 

@@ -143,7 +143,7 @@ RepositoryProvider<ApiService>(
 - `Icon=flat-scanner-client` — требует наличия иконки в системе.
 
 ### 6.3. `PKGBUILD` — путь к проекту ✅
-✅ **Исправлено:** Путь в `build()` приведён в соответствие: `flat-scanner-client-flutter` → `flat-scanner-client`.
+✅ **Корректный:** Путь в `build()` соответствует: `flat-scanner-client`.
 
 ---
 
@@ -194,7 +194,7 @@ RepositoryProvider<ApiService>(
 2. **Расхождение имён состояний BLoC** — исправлено: `ScannerScanning`/`ScannerSuccess`/`ScannerError`.
 3. **Несовместимость `PageVertices`** — исправлено: `fromJson` теперь парсит `Map` с `p1`–`p4`.
 4. **Утечка `ApiService.dispose()`** — исправлено: добавлен `dispose` в `RepositoryProvider`.
-5. **Расхождение PKGBUILD пути** — исправлено: `flat-scanner-client-flutter` → `flat-scanner-client`.
+5. **PKGBUILD путь корректный** — `flat-scanner-client`.
 
 ### Низкие
 ✅ **Все исправлены:**

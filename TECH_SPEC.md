@@ -289,7 +289,7 @@ T(x, y) = m(x, y) · [1 + k · (s(x, y) / R − 1)]
 
 ## 7. FLUTTER UI (РЕАЛИЗОВАНО)
 
-**Каталог:** `flat-scanner-client-flutter/`
+**Каталог:** `flat-scanner-client/`
 
 ### 7.1 Архитектура ScannerBLoC
 
@@ -387,9 +387,9 @@ T(x, y) = m(x, y) · [1 + k · (s(x, y) / R − 1)]
 
 | Файл | Назначение |
 |------|------------|
-| `flat-scanner-client-flutter/PKGBUILD` | Arch Linux пакет `flat-scanner-client` |
-| `flat-scanner-client-flutter/flat-scanner-client.desktop` | .desktop entry для меню приложений |
-| `flat-scanner-client-flutter/README.md` | Инструкция по установке и запуску |
+| `flat-scanner-client/PKGBUILD` | Arch Linux пакет `flat-scanner-client` |
+| `flat-scanner-client/flat-scanner-client.desktop` | .desktop entry для меню приложений |
+| `flat-scanner-client/README.md` | Инструкция по установке и запуску |
 
 ### Установка (Arch Linux)
 
@@ -399,7 +399,7 @@ makepkg -si flat-scanner-server/PKGBUILD
 systemctl enable --now flat-scanner-server
 
 # Клиент
-makepkg -si flat-scanner-client-flutter/PKGBUILD
+makepkg -si flat-scanner-client/PKGBUILD
 ```
 
 ---
@@ -447,11 +447,11 @@ panic = "abort"
 | `src/session_store.rs` | SQLite (rusqlite): books + spreads, WAL, транзакции | ✅ |
 | `src/session_recovery.rs` | Hot restart: восстановление UUID + очередь + pending-журналирование | ✅ |
 | `src/config.rs` | Загрузка config.toml + CLI-флаги (--host/--port) | ✅ |
-| `flat-scanner-client-flutter/lib/` | Flutter клиент: BLoC, ApiService, ThemeService, ScanEditorPage | ✅ |
+| `flat-scanner-client/lib/` | Flutter клиент: BLoC, ApiService, ThemeService, ScanEditorPage | ✅ |
 | `flat-scanner-server/PKGBUILD` | Arch Linux пакет сервера | ✅ |
 | `flat-scanner-server/flat-scanner-server.service` | systemd unit | ✅ |
-| `flat-scanner-client-flutter/PKGBUILD` | Arch Linux пакет клиента | ✅ |
-| `flat-scanner-client-flutter/flat-scanner-client.desktop` | .desktop entry | ✅ |
+| `flat-scanner-client/PKGBUILD` | Arch Linux пакет клиента | ✅ |
+| `flat-scanner-client/flat-scanner-client.desktop` | .desktop entry | ✅ |
 
 ### Реализовано ✅
 
@@ -477,7 +477,7 @@ panic = "abort"
 | R18 | SQLite Session Store (books + spreads, WAL, транзакции) | `session_store.rs` |
 | R19 | Hot restart сессии (pending-журналирование, WAL checkpoint) | `session_recovery.rs` |
 | R20 | CLI-флаги --host/--port + config.toml | `config.rs` |
-| R21 | Flutter клиент (BLoC + ApiService + ThemeService + ScanEditorPage) | `flat-scanner-client-flutter/` |
+| R21 | Flutter клиент (BLoC + ApiService + ThemeService + ScanEditorPage) | `flat-scanner-client/` |
 | R22 | PKGBUILD + systemd + .desktop (сервер + клиент) | `PKGBUILD`, `.service`, `.desktop` |
 
 ### Не реализовано ❌
