@@ -1,20 +1,183 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
 import 'models.dart';
 
+/// Конфигурация Flat Scanner (общая для сервера и клиента).
+class ScannerConfig {
+  final String host;
+  final int port;
+  final String baseDir;
+  final String rawDir;
+  final String processedDir;
+  final String exportDir;
+  final String importDir;
+  final String database;
+
+  ScannerConfig({
+    required this.host,
+    required this.port,
+    required this.baseDir,
+    required this.rawDir,
+    required this.processedDir,
+    required this.exportDir,
+    required this.importDir,
+    required this.database,
+  });
+
+  /// Загружает конфигурацию из ~/.config/flat-scanner/config.toml
+  static Future<ScannerConfig> load() async {
+    const defaultHost = '127.0.0.1';
+    const defaultPort = 54321;
+    const defaultBaseDir = '~/.local/share/flat-scanner';
+    const defaultRawDir = 'raw';
+    const defaultProcessedDir = 'processed';
+    const defaultExportDir = 'export';
+    const defaultImportDir = 'import';
+    const defaultDatabase = 'data.db';
+
+    try {
+      final homeDir = Platform.environment['HOME'] ?? '';
+      final configPath = '$homeDir/.config/flat-scanner/config.toml';
+      final file = File(configPath);
+
+      if (await file.exists()) {
+        final content = await file.readAsString();
+        return _parseToml(content);
+      }
+    } catch (e) {
+      // Используем дефолты при ошибке
+    }
+
+    return ScannerConfig(
+      host: defaultHost,
+      port: defaultPort,
+      baseDir: defaultBaseDir,
+      rawDir: defaultRawDir,
+      processedDir: defaultProcessedDir,
+      exportDir: defaultExportDir,
+      importDir: defaultImportDir,
+      database: defaultDatabase,
+    );
+  }
+
+  /// Простой парсер TOML для секций [server] и [paths]
+  static ScannerConfig _parseToml(String content) {
+    var host = '127.0.0.1';
+    var port = 54321;
+    var baseDir = '~/.local/share/flat-scanner';
+    var rawDir = 'raw';
+    var processedDir = 'processed';
+    var exportDir = 'export';
+    var importDir = 'import';
+    var database = 'data.db';
+
+    var currentSection = '';
+    for (final line in content.split('\n')) {
+      final trimmed = line.trim();
+
+      // Пропускаем комментарии и пустые строки
+      if (trimmed.isEmpty || trimmed.startsWith('#')) continue;
+
+      // Секции
+      if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+        currentSection = trimmed.substring(1, trimmed.length - 1);
+        continue;
+      }
+
+      // Ключ = значение
+      final eqIndex = trimmed.indexOf('=');
+      if (eqIndex == -1) continue;
+
+      final key = trimmed.substring(0, eqIndex).trim();
+      var value = trimmed.substring(eqIndex + 1).trim();
+
+      // Удаляем кавычки
+      if (value.startsWith('"') && value.endsWith('"')) {
+        value = value.substring(1, value.length - 1);
+      }
+
+      if (currentSection == 'server') {
+        if (key == 'host') host = value;
+        if (key == 'port') port = int.tryParse(value) ?? 54321;
+      } else if (currentSection == 'paths') {
+        if (key == 'base_dir') baseDir = value;
+        if (key == 'raw_dir') rawDir = value;
+        if (key == 'processed_dir') processedDir = value;
+        if (key == 'export_dir') exportDir = value;
+        if (key == 'import_dir') importDir = value;
+        if (key == 'database') database = value;
+      }
+    }
+
+    return ScannerConfig(
+      host: host,
+      port: port,
+      baseDir: baseDir,
+      rawDir: rawDir,
+      processedDir: processedDir,
+      exportDir: exportDir,
+      importDir: importDir,
+      database: database,
+    );
+  }
+
+  /// Резолвит ~ в $HOME
+  String resolveHome(String path) {
+    if (path.startsWith('~/')) {
+      final homeDir = Platform.environment['HOME'] ?? '';
+      return '$homeDir/${path.substring(2)}';
+    }
+    return path;
+  }
+
+  /// Возвращает абсолютный путь к базовому каталогу
+  String get basePath => resolveHome(baseDir);
+
+  /// Возвращает абсолютный путь к каталогу сырых сканов
+  String get rawPath => '$basePath/$rawDir';
+
+  /// Возвращает абсолютный путь к каталогу обработанных страниц
+  String get processedPath => '$basePath/$processedDir';
+
+  /// Возвращает абсолютный путь к каталогу экспорта PDF
+  String get exportPath => '$basePath/$exportDir';
+
+  /// Возвращает абсолютный путь к каталогу импорта PDF
+  String get importPath => '$basePath/$importDir';
+
+  /// Возвращает абсолютный путь к базе данных
+  String get databasePath => '$basePath/$database';
+}
+
 /// HTTP-клиент для Flat Scanner Server (Axum).
 ///
 /// Адрес сервера настраивается через [host] и [port]
-/// (по умолчанию `127.0.0.1:8080`).
+/// (по умолчанию `127.0.0.1:54321`).
 class ApiService {
   final String host;
   final int port;
   final http.Client _client;
+  final ScannerConfig? config;
 
-  ApiService({this.host = '127.0.0.1', this.port = 8080, http.Client? client})
-    : _client = client ?? http.Client();
+  ApiService({
+    this.host = '127.0.0.1',
+    this.port = 54321,
+    http.Client? client,
+    this.config,
+  }) : _client = client ?? http.Client();
+
+  /// Создаёт ApiService из конфигурации
+  static Future<ApiService> fromConfig() async {
+    final config = await ScannerConfig.load();
+    return ApiService(
+      host: config.host,
+      port: config.port,
+      config: config,
+    );
+  }
 
   String get _baseUrl => 'http://$host:$port';
 

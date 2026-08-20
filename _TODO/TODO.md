@@ -1,0 +1,315 @@
+# TODO — Задачи на доработку проекта «Канонисса-Библиотека»
+
+**Дата создания:** 14 августа 2026 г.  
+**Дата актуализации:** 18 августа 2026 г.  
+**Исходник:** TECH_SPEC.md (разделы 10–12), TECH_SPEC_addon_1.md (§1.1–1.3), AUDIT.md
+
+---
+
+## Этап B: Computer Vision (MEDIUM-HIGH)
+
+### B1. Доработка деварпинга корешка книги
+- [x] Реализовать цилиндрическую трансформацию для выпрямления текста у тугого корешка
+  - [x] Детекция центральной тени корешка по градиенту яркости (`detect_spine_shadow`)
+  - [x] Построение Mesh Grid деформации через Text Line Tracking (`build_cylindrical_deformation`)
+  - [x] Применение remap(cx,cy→x',y') обратной координатной трансформации (`dewarp_spine`)
+- **Файл:** `src/cv/warping.rs`
+- **Статус:** Реализовано, cargo check + cargo test OK
+
+### B2. Изоляция боковых артефактов ("боковушек") ✅ ЗАВЕРШЕНО
+- [x] Градиентный анализ плотности по периферии macro-contour
+  - Обнаружение паттерна "частые чередующиеся светлые/тёмные линии"
+  - Принудительный сдвиг рамки детекции внутрь на шаг дефекта
+- **Файл:** `src/cv/segmentation.rs`
+- **Статус:** Реализовано, cargo check + cargo test OK
+
+### B3. Улучшение coarse masking ✅ ЗАВЕРШЕНО
+- [x] Доработка маскирования потолка/ламп для сложных сценариев освещения
+  - Мультимасштабный анализ (3 масштаба)
+  - Morphological closing для объединения близких пятен
+- **Файл:** `src/cv/segmentation.rs`
+- **Статус:** Реализовано, cargo check + cargo test OK
+
+---
+
+## Этап C: Flutter Desktop клиент (MEDIUM-HIGH)
+
+### C1. Генерация проекта Flutter ✅ ЗАВЕРШЕНО
+- [x] Создать проект Flutter Linux desktop (`flat-scanner-client/`)
+- [x] Настроить маршрутизацию HTTP к Axum API (настраиваемый host/port)
+- [x] Подключить крейты http/bloc/flutter_bloc/equatable/window_manager
+- [x] Настроить структуру lib/{presentation/domain/data}
+
+### C2. ScannerBLoC реактивная модель ✅ ЗАВЕРШЕНО
+- [x] Реализовать ScannerEvent (StartScan, ResetScan)
+- [x] Реализовать ScannerState (Initial, Scanning, Success, Error)
+- [x] Настроить потоковую обработку через BlocProvider
+- [x] Интегрировать POST запросы к Axum API
+- **Файл:** `flat-scanner-client/lib/domain/scanner_bloc.dart`
+- **Статус:** flutter analyze OK, flutter build linux --release OK
+
+### C3. UI редактора сканирования ✅ ЗАВЕРШЕНО
+- [x] ScanEditorPage: выбор профиля, кнопка сканирования, результат
+- [x] Отображение вершин страницы и времени обработки
+- [x] Опциональный полноэкранный режим (window_manager)
+- [x] ThemeService: адаптация под KDE/Breeze + Material 3
+- **Файлы:** `lib/presentation/scan_editor_page.dart`, `lib/data/theme_service.dart`
+- **Статус:** flutter analyze OK, flutter build linux --release OK
+
+### C4. CustomPainter интерактивной сетки ✅ ЗАВЕРШЕНО
+- [x] Реализовать VertexEditor (CustomPainter) с Drag-and-Drop вершин
+- [x] Добавить Draggable Point с UX-кольцами подсветки (активная вершина — оранжевая, увеличенная)
+- [x] Интегрировать GestureDetector.onPanStart/onPanUpdate/onPanEnd
+- [x] Отправка PATCH запросов к Axum API для корректировки вершин (adjust-vertex, G2)
+- [x] ApiService вынесен в RepositoryProvider (main.dart), доступен виджетам
+- **Файл:** `flat-scanner-client/lib/presentation/vertex_editor.dart`
+- **Статус:** Реализовано, подключено в `_ScanResultCard` (scan_editor_page.dart), flutter analyze OK
+- **Зависимость:** G2 (endpoint adjust-vertex)
+
+---
+
+## Этап F: Упаковка и дистрибуция (MEDIUM)
+
+### F1. Сервер: конфигурация и сервисы ✅ ЗАВЕРШЕНО
+- [x] CLI-флаги --host/--port + config.toml
+- [x] systemd service unit
+- [x] PKGBUILD для flat_scanner_server
+- [x] README сервера
+
+### F2. Клиент: дистрибуция ✅ ЗАВЕРШЕНО
+- [x] .desktop entry (flat-scanner-client.desktop)
+- [x] PKGBUILD для flat-scanner-client
+- [x] README клиента
+- **Статус:** flutter build linux --release OK
+
+---
+
+## Этап D: Session Store + Hot Restart (HIGH)
+
+### D1. SQLite транзакционная модель ✅ ЗАВЕРШЕНО
+- [x] Создать модуль session_store.rs на базе rusqlite
+- [x] Реализовать схему БД:
+  - Таблица books (uuid, name, start_date, total_pages, status)
+  - Таблица spreads (book_uuid, spread_index, left_path, right_path, left_vertices, right_vertices, threshold_k, status)
+- [x] Атомарные INSERT+UPDATE операции в BEGIN TRANSACTION...COMMIT
+- [x] Настроить journal_mode=WAL
+- **Файл:** `src/session_store.rs`
+- **Статус:** Реализовано, интегрировано в main.rs, cargo check + cargo test OK (28 тестов)
+
+### D2. Горячий рестарт сессии ✅ ЗАВЕРШЕНО
+- [x] Логика восстановления при старте:
+  - [x] Чтение последнего незавершённого UUID
+  - [x] Восстановление очереди спредов
+  - [x] Открытие книги на прерванной странице
+- [x] Двойное журналирование:
+  - [x] Предварительная запись `/tmp/<uuid>.pending`
+  - [x] Подтверждение успеха коммитом
+  - [x] Финальный WAL checkpoint
+- [x] Очистка устаревших pending-файлов (старше 24 часов)
+- **Файл:** `src/session_recovery.rs`
+- **Статус:** Реализовано, интегрировано в main.rs, cargo check + cargo test OK (34 теста)
+- **Зависимость:** D1
+
+---
+
+## Этап E: PDF Exporter + Multi-profile (MEDIUM)
+
+### E1. Экспорт в CCITT Group 4 TIFF ✅ ЗАВЕРШЕНО
+- [x] Подключить крейт `tiff`
+- [x] Реализовать функцию encode_ccitt_g4_to_file() через OpenCV imgcodecs::imwrite
+- [x] Заменить imgcodecs::imwrite("png") на CCITT G4 энкодер в CLI и Web API режимах
+- **Файл:** `src/cv/ccitt_encoder.rs`
+- **Статус:** Реализовано, интегрировано, cargo check + cargo test OK
+- **Замечание:** OpenCV требует 1-битный ввод для CCITT G4 (Bits/sample=1). При 8-битном вводе файл создаётся, но с предупреждением. Необходимо бинаризовать изображение до 1-битного формата перед вызовом.
+
+### E2. Multi-profile фильтрация ✅ ЗАВЕРШЕНО
+- [x] Создать модуль profile_filtering.rs
+- [x] Реализовать enum ProcessingProfile:
+  - Text_BW_1bit (Sauvola + CCITT G4)
+  - Illustration_Grayscale_8bit (gamma correction + CLAHE contrast)
+  - Color_RGB_24bit (оригинальная палитра)
+- [x] Функция apply_profile(mat, profile, k_factor, window_size)
+- [x] Передача параметра профиля из Flutter UI через API (поле `profile` в ScanTriggerRequest)
+- [x] Сохранение: CCITT G4 TIFF для 1-бит, PNG для grayscale/color
+- **Файл:** `src/cv/profile_filtering.rs`
+- **Статус:** Реализовано, интегрировано в main.rs, cargo check + cargo test OK
+
+---
+
+## Этап G: Сохранение печатей и разборка PDF (HIGH)
+
+### G3. Сохранение печатей и штампов ✅ ЗАВЕРШЕНО
+- [x] Создать модуль seal_extraction.rs
+- [x] Извлечение маски печати по **насыщенности (S-канал HSV)** — универсально для красных, синих, голубых и фиолетовых чернил (прежнее решение по каналу Cr ловило только красный)
+- [x] Порог Otsu + морфологическая очистка (открытие/закрытие)
+- [x] Порог площади (MIN_SEAL_AREA_RATIO) для отсечения шума бумаги
+- [x] overlay_seal_on_text: принудительная чёрная заливка пикселей печати
+- [x] Интеграция в apply_profile (TextBw1bit) — печать сохраняется в 1-битном растре
+- [x] 6 unit-тестов (красная/синяя/фиолетовая печать, grayscale-noop, overlay, empty-mask)
+- **Файл:** `src/cv/seal_extraction.rs`
+- **Статус:** Реализовано, интегрировано, cargo check + cargo test OK (46 тестов)
+- **Зависимость:** E2 (profile_filtering), E1 (ccitt_encoder)
+- **Замечание:** детекция по S-каналу HSV покрывает все цвета чернил независимо от оттенка; цветные иллюстрации/фото в кадре тоже попадают в маску (для TextBw1bit допустимо — сохраняются как чёрные чернила).
+
+### G4. Разборка сторонних PDF ✅ BACKEND ЗАВЕРШЁН
+- [x] Создать модуль pdf_importer.rs
+- [x] Подключить pdftoppm (poppler-utils) для растеризации + lopdf для структурных операций
+- [x] Реализовать:
+  - Открытие "чужих" PDF (`Document::load`)
+  - Декомпиляцию страниц в растровые слои (`pdftoppm -png -r <dpi>`)
+  - Точечную замену дефектных листов (`replace_page`)
+  - Вставку страниц (`insert_page`)
+  - Очистку от шума (`clean_page` через `apply_profile`)
+- [x] REST endpoints: `/api/v1/import-pdf`, `/api/v1/replace-pdf-page`, `/api/v1/insert-pdf-page`, `/api/v1/clean-pdf-page`
+- [x] 6 unit-тестов, cargo test — 55 passed
+- [x] Flutter-клиент: методы `importPdf`/`replacePdfPage`/`insertPdfPage`/`cleanPdfPage` в `api_service.dart` + UI (`pdf_import_page.dart`, кнопка в AppBar `ScanEditorPage`)
+- **Файл:** `flat-scanner-server/src/pdf_importer.rs`
+
+### G5. Сборка финального PDF из CCITT G4 ✅ ЗАВЕРШЕНО
+- [x] Собрать финальный PDF из CCITT G4 TIFF-страниц
+- [x] Сохранить метаданные (название книги, страницы)
+- [x] REST endpoint `POST /api/v1/export-pdf` (uuid + опциональный output_path)
+- [x] Flutter: метод `exportPdf` в `api_service.dart` + кнопка «Экспортировать PDF»
+- **Файл:** `flat-scanner-server/src/pdf_exporter.rs`
+- **Статус:** Реализовано, интегрировано, cargo build + cargo test OK (49 тестов), flutter analyze OK
+- **Зависимость:** E1 (ccitt_encoder), D1 (session_store)
+- **Замечание:** блокирующий вызов `assemble_pdf_from_tiff_pages` выполняется напрямую в async-хендлере (без `spawn_blocking`) — для локального инструмента блокировка event loop допустима, это обходит проблему не-Send future из-за `std::sync::MutexGuard`.
+
+---
+
+## Этап H: Инфраструктурный слой — AUDIT (TECH_SPEC_addon_1.md §1.1–1.3)
+
+**Исходник:** AUDIT.md. Пошаговое исправление нарушений аудита.
+
+### T1. Типизированная ошибка DigitizationError (§1.1) ✅ ЗАВЕРШЕНО
+- [x] Создать `enum DigitizationError { InvalidPageGeometry, NoContourFound, DegenerateContour, ... }` с `thiserror`
+- [x] Заменить `Result<_, String>` на `Result<_, DigitizationError>` в cv-модулях (`segmentation.rs`, `warping.rs`)
+- **Файл:** `src/cv/mod.rs` (объявление), `src/cv/segmentation.rs`, `src/cv/warping.rs`
+- **Статус:** Реализовано, cargo check + cargo test OK
+
+### T2. Геометрическая валидация перед гомографией (§1.1) ✅ ЗАВЕРШЕНО
+- [x] В `perspective_warp`/`process_book_contours` добавить проверки: `pts.len() == 4`, `contour_area >= 0.15 * frame_area`, `is_contour_convex`
+- [x] При сбое — `Err(DigitizationError::InvalidPageGeometry)`
+- [x] Привязка сбоя к статусу FAILED страницы в SQLite + запись `error_message`
+- **Файл:** `src/cv/warping.rs`, `src/cv/segmentation.rs`, `src/session_store.rs`
+- **Статус:** Реализовано, cargo check + cargo test OK
+- **Зависимость:** T1
+
+### T3. spawn_blocking для cv-хендлеров (§1.2) ✅ ЗАВЕРШЕНО
+- [x] Обернуть cv-хендлеры (`process_scan_frame` уже ок; dewarp/segmentation/profile/export) в `tokio::task::spawn_blocking`
+- [x] Передача данных через `Send`-совместимые структуры (`Mat`/`Vec<u8>`)
+- **Файл:** `src/main.rs`
+- **Статус:** Реализовано, cargo check + cargo test OK
+
+### T4. Single Writer + FIFO-очередь SQLite (§1.3) ✅ ЗАВЕРШЕНО
+- [x] Создать `tokio::sync::mpsc::channel` задач записи
+- [x] Запустить один фоновый воркер-писатель, выполняющий транзакции последовательно
+- [x] Оставить чтения (`get_book_progress`, `get_pending_pages`) параллельными из Axum-потоков
+- **Файл:** `src/write_queue.rs`, `src/main.rs`
+- **Статус:** Реализовано, cargo check + cargo test OK
+
+### T5. Валидация и документация ✅ ЗАВЕРШЕНО
+- [x] `cargo test` — все тесты зелёные (57 passed)
+- [x] Обновить `CHANGELOG.md` (Added/Changed)
+- [x] Обновить `AUDIT.md` — пометить исправленные пункты ✅
+- **Статус:** Реализовано, cargo test OK
+- **Зависимость:** T1–T4
+
+---
+
+## Этап I: Безопасное взаимодействие с SANE/OpenCV (TECH_SPEC_addon_2.md)
+
+**Исходник:** TECH_SPEC_addon_2.md (§2–§4). Безопасные RAII-обёртки вокруг SANE FFI и OpenCV, изоляция C++ исключений, геометрический валидатор перед `warp_perspective`.
+
+### U1. Расширение `DigitizationError` до контракта §4 ✅ ЗАВЕРШЕНО
+- [x] Добавить варианты: `SaneError(String)`, `OpenCVPanic(String)`, `DatabaseError(#[from] rusqlite::Error)`, `IoError(#[from] std::io::Error)`
+- [x] Сохранить существующие `InvalidPageGeometry`/`NoContourFound`/`DegenerateContour`/`OpenCv`
+- [x] Проверить, что `#[from]`-конверсии не конфликтуют с существующими `From`-impl
+- **Файл:** `flat-scanner-server/src/cv/mod.rs`
+- **Статус:** Завершено
+
+### U2. RAII-обёртка `SaneScanner` (§2.1–2.2) ✅ ЗАВЕРШЕНО
+- [x] Инкапсулировать дескриптор/child-процесс `scanimage` в `struct SaneScanner { child: Option<Child> }`
+- [x] Реализовать `impl Drop for SaneScanner` — гарантированное закрытие (wait+drop) по стандарту RAII
+- [x] `unsafe impl Send for SaneScanner {}` + `impl !Sync for SaneScanner {}` (SANE не потокобезопасна)
+- [x] Перевести `capture_sane_frame` на создание/использование обёртки вместо «сырого» `Command`
+- **Файл:** `flat-scanner-server/src/sane_core.rs`
+- **Статус:** Завершено
+- **Зависимость:** U1
+
+### U3. Переиспользуемый буфер чтения кадров (§2.3) ✅ ЗАВЕРШЕНО
+- [x] Функция чтения принимает `&mut Vec<u8>` вместо аллокации нового `Vec<u8>` на итерацию `sane_read`
+- [x] Буфер аллоцируется один раз и переиспользуется между кадрами (предотвращение фрагментации кучи)
+- **Файл:** `flat-scanner-server/src/sane_core.rs`
+- **Статус:** Завершено
+- **Зависимость:** U2
+
+### U4. Геометрический валидатор `validate_page_geometry` (§3.2) ✅ ЗАВЕРШЕНО
+- [x] Выделить `pub fn validate_page_geometry(contour: &Vector<Point2f>, frame_area: f64) -> Result<(), DigitizationError>`
+- [x] Порядок проверок: (1) `contour.len() == 4` → (2) `is_contour_convex` → (3) `contour_area >= frame_area * 0.15`
+- [x] Вызывать ДО `warp_perspective`/`get_perspective_transform`; рефакторинг инлайн-проверок T2 на её использование
+- **Файл:** `flat-scanner-server/src/cv/warping.rs`, `src/cv/segmentation.rs`
+- **Статус:** Завершено
+- **Зависимость:** U1
+
+### U5. `safe_calculate_homography` (§3.1) ✅ ЗАВЕРШЕНО
+- [x] `pub fn safe_calculate_homography(src_points, dst_points) -> Result<Mat, DigitizationError>`
+- [x] `imgproc::get_perspective_transform(...).map_err(|e| DigitizationError::OpenCVPanic(...))` — изоляция `cv::Exception`
+- [x] Убрать `unwrap()`/`expect()`/`let _ =` из cv-конвейера (warping/segmentation)
+- **Файл:** `flat-scanner-server/src/cv/warping.rs`
+- **Статус:** Завершено
+- **Зависимость:** U1
+
+### U6. Валидация и документация ✅ ЗАВЕРШЕНО
+- [x] `cargo check` + `cargo test` — все тесты зелёные (57 passed)
+- [x] Обновить `CHANGELOG.md` (Added/Changed) и `AUDIT.md` (новые пункты §2–§4)
+- [x] Коммит (Conventional Commits) + пуш
+- **Статус:** Завершено
+- **Зависимость:** U1–U5
+
+---
+
+## Этап J: Сквозной скоростной пайплайн (TECH_SPEC_addon_3.md)
+
+**Исходник:** TECH_SPEC_addon_3.md (§2–§4). Сквозная функция `process_page` — минимальное удержание сканера, мгновенный сброс выпрямленного ч/б кадра на диск.
+
+### J1. Модуль `src/pipeline.rs` ✅ ЗАВЕРШЕНО
+- [x] `fast_binarize(src: &Mat) -> Result<Mat, DigitizationError>` — нативный `imgproc::adaptive_threshold` (ADAPTIVE_THRESH_MEAN_C, blockSize=11, C=2.0), перевод в grayscale при 3 каналах
+- [x] `pub struct PageProcessor { write_queue_tx, output_dir }` + `new()`
+- [x] `pub async fn process_page(book_id, page_number, scanner: SaneScanner)` — вся цепочка в одном `tokio::task::spawn_blocking`:
+  - `SaneScanner::read_frame` (пред-аллокация буфера 8MB) → `imdecode`
+  - `cv::segmentation::process_book_contours` → `PageVertices`
+  - `cv::warping::perspective_warp` (внутри — `validate_page_geometry` + `safe_calculate_homography`, addon_2 §3)
+  - `fast_binarize` → `imwrite` PNG в `output_dir/<book_id>_<page>.png`
+  - `tx.blocking_send(WriteTask::UpdatePage { status: "DEWARPED" })`
+- **Файл:** `flat-scanner-server/src/pipeline.rs`
+- **Статус:** Реализовано, cargo check + cargo test OK
+- **Зависимость:** U2/U3 (SaneScanner), U4/U5 (валидатор + гомография), T4 (write_queue)
+
+### J2. `WriteTask::UpdatePage` ✅ ЗАВЕРШЕНО
+- [x] Новый вариант `UpdatePage { book_id, page_number, raw_path, dewarped_path, status, error }` в `WriteTask`
+- [x] Обработка в воркере-писателе: UPDATE таблицы spreads по book_uuid/spread_index
+- **Файл:** `flat-scanner-server/src/write_queue.rs`
+- **Статус:** Реализовано, cargo check + cargo test OK
+- **Зависимость:** T4
+
+### J3. Интеграция в `main.rs` ✅ ЗАВЕРШЕНО
+- [x] `mod pipeline;` + конструирование `PageProcessor` (канал очереди + `output_dir` из config)
+- [x] Передача в хендлер сканирования
+- **Файл:** `flat-scanner-server/src/main.rs`
+- **Статус:** Реализовано, cargo check + cargo test OK
+- **Зависимость:** J1, J2
+
+---
+
+## Дополнительные задачи
+
+### M8. Пакетная калибровка порогов Sauvola ✅ ЗАВЕРШЕНО
+- [x] Реализовать hot-reload параметра k_factor (отслеживание mtime файла)
+- [x] Динамическая реконфигурация через std::sync::Mutex + троттлинг 500мс
+- [x] Файл калибровки `calibration.json` (k_factor, window_size, profile)
+- [x] Методы `reload()` и `save()` для Flutter UI (endpoint /api/v1/calibration — TODO)
+- [x] Интеграция в main.rs: параметры читаются при каждой обработке кадра
+- **Файл:** `src/cv/calibration.rs`
+- **Статус:** Реализовано, интегрировано, cargo check + cargo test OK
+- **Замечание:** REST endpoint `/api/v1/calibration` — ✅ ЗАВЕРШЕНО 16.08.2026. `CalibrationManager` (global OnceLock, mtime cache 500ms), `process_scan_frame` читает `calib.get()` перед каждой обработкой, Flutter `api_service.dart` — `getCalibration()`/`updateCalibration()`, `CalibrationParams` model, порт по умолчанию 8080. 4 теста калибровки зелёные, `flutter analyze` чисто. Документация: `flat-scanner-server/docs/tools/calibration_api.md`.

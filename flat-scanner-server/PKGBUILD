@@ -10,7 +10,7 @@ url="https://github.com/Valeria-Fadeeva/flat-scanner"
 license=('AGPL-3.0-only')
 depends=('opencv' 'sane' 'libtiff' 'sqlite' 'glibc')
 makedepends=('cargo' 'pkg-config')
-backup=('etc/flat-scanner-server/config.toml')
+backup=('etc/flat-scanner/config.toml')
 options=('!lto') # Предотвращаем конфликты, так как LTO уже жестко зашит в Cargo.toml
 source=("flat-scanner-$pkgver.tar.gz::https://github.com/Valeria-Fadeeva/flat-scanner/archive/refs/tags/v$pkgver.tar.gz"
         "flat-scanner-server.service")
@@ -40,14 +40,18 @@ package() {
     install -Dm644 "$srcdir/flat-scanner-server.service" \
         "$pkgdir/usr/lib/systemd/system/flat-scanner-server.service"
 
-    # 3. Конфигурационный слой Экосистемы
-    install -Dm644 -d "$pkgdir/etc/flat-scanner-server"
+    # 3. Конфигурационный слой Экосистемы (XDG Base Directory Specification)
+    install -Dm644 -d "$pkgdir/etc/flat-scanner"
     install -Dm644 config.example.toml \
-        "$pkgdir/etc/flat-scanner-server/config.toml"
+        "$pkgdir/etc/flat-scanner/config.toml"
 
     # 4. Государственное хранилище данных и горячий рестарт сессий
-    # Выставляем права 770, чтобы сервис мог писать данные автономно
-    install -Dm770 -d "$pkgdir/var/lib/flat-scanner"
+    # XDG Data Directory: ~/.local/share/flat-scanner
+    install -Dm770 -d "$pkgdir/.local/share/flat-scanner"
+    install -Dm770 -d "$pkgdir/.local/share/flat-scanner/raw"
+    install -Dm770 -d "$pkgdir/.local/share/flat-scanner/processed"
+    install -Dm770 -d "$pkgdir/.local/share/flat-scanner/export"
+    install -Dm770 -d "$pkgdir/.local/share/flat-scanner/import"
 
     # 5. Сопутствующая документация ядра
     install -Dm644 README.md "$pkgdir/usr/share/doc/flat-scanner-server/README.md"

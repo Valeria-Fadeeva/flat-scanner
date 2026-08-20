@@ -88,17 +88,19 @@ struct ScanResponse {
 async fn main() -> Result<(), String> {
     let args = CliArgs::parse();
 
-    // C1: Инициализация путей к каталогам (валидация при старте)
-    for dir in ["./split", "./export", "./import"] {
-        if let Err(e) = fs::create_dir_all(dir) {
-            return Err(format!("Не удалось создать каталог {}: {}", dir, e));
-        }
+    // C1: Загрузка конфигурации и инициализация путей
+    let mut cfg = config::Config::load();
+    cfg.apply_cli_overrides(args.host.clone(), args.port);
+
+    // Создание каталогов из конфигурации
+    if let Err(e) = cfg.paths.create_directories() {
+        return Err(format!("Ошибка инициализации каталогов: {}", e));
     }
-    println!("[📁 PATHS]: Каталоги инициализированы");
+    println!("[📁 PATHS]: Каталоги инициализированы в {}", cfg.paths.base_path().display());
 
     // D1: Инициализация Session Store (SQLite)
-    let db_path = "./data.db";
-    let session_store = session_store::global_session_store(db_path);
+    let db_path = cfg.paths.database_path().to_string_lossy().to_string();
+    let session_store = session_store::global_session_store(&db_path);
     println!("[💾 SESSION STORE]: Инициализирован SQLite на {}", db_path);
 
     // §1.3: Запуск единственного воркера записи в SQLite
@@ -148,9 +150,6 @@ async fn main() -> Result<(), String> {
     // РЕЖИМА 2 (Дефолт): Запуск веб-сервера Axum под управление Tokio для Flutter
     println!("[🌐 WEB MODE]: Запуск асинхронного сервера для Flutter Desktop...");
 
-    // Загрузка конфигурации bind-адреса (CLI-флаг > config.toml > дефолт)
-    let mut cfg = config::Config::load();
-    cfg.apply_cli_overrides(args.host.clone(), args.port);
     if cfg.server.host == "0.0.0.0" {
         println!("[⚠️ BIND]: Сервер слушает на 0.0.0.0 — открыт доступ по сети!");
     }
@@ -159,7 +158,8 @@ async fn main() -> Result<(), String> {
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
-    let page_processor = std::sync::Arc::new(pipeline::PageProcessor::new("./split".to_string()));
+    let processed_dir = cfg.paths.processed_path().to_string_lossy().to_string();
+    let page_processor = std::sync::Arc::new(pipeline::PageProcessor::new(processed_dir));
 
     // M4: Лимит на размер загружаемого изображения (50MB)
     // Предотвращает memory exhaustion при загрузке слишком больших файлов
@@ -280,7 +280,9 @@ async fn adjust_vertex(
     }
 
     // Получаем последнюю запись спреда
-    let store = session_store::global_session_store("./data.db");
+    let cfg = config::Config::load();
+    let db_path = cfg.paths.database_path().to_string_lossy().to_string();
+    let store = session_store::global_session_store(&db_path);
     let store = store.lock().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -406,7 +408,9 @@ struct ExportPdfResponse {
 async fn export_pdf(
     Json(payload): Json<ExportPdfRequest>,
 ) -> Result<Json<ExportPdfResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let store = session_store::global_session_store("./data.db");
+    let cfg = config::Config::load();
+    let db_path = cfg.paths.database_path().to_string_lossy().to_string();
+    let store = session_store::global_session_store(&db_path);
     let store = store.lock().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -467,9 +471,11 @@ async fn export_pdf(
     drop(store);
 
     // Путь к выходному PDF
+    let cfg = config::Config::load();
+    let export_dir = cfg.paths.export_path();
     let output_path = match &payload.output_path {
         Some(p) if !p.is_empty() => p.clone(),
-        _ => format!("./export/{}.pdf", payload.uuid),
+        _ => export_dir.join(format!("{}.pdf", payload.uuid)).to_string_lossy().to_string(),
     };
     if let Some(parent) = std::path::Path::new(&output_path).parent() {
         if !parent.as_os_str().is_empty() {
@@ -594,9 +600,11 @@ struct PdfOperationResponse {
 async fn import_pdf(
     Json(payload): Json<ImportPdfRequest>,
 ) -> Result<Json<ImportPdfResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let cfg = config::Config::load();
+    let import_dir = cfg.paths.import_path().to_string_lossy().to_string();
     let output_dir = match &payload.output_dir {
         Some(d) if !d.is_empty() => d.clone(),
-        _ => "./import".to_string(),
+        _ => import_dir,
     };
 
     let pages = pdf_importer::import_pdf_pages(&payload.input_pdf, &output_dir, payload.dpi)
@@ -843,8 +851,10 @@ async fn process_scan_frame(
     let uuid = payload.uuid.clone();
     let uuid_for_task = uuid.clone();
 
+    let cfg = config::Config::load();
+    let processed_dir = cfg.paths.processed_path().to_string_lossy().to_string();
     let result = tokio::task::spawn_blocking(move || {
-        let processor = pipeline::PageProcessor::new("./split".to_string());
+        let processor = pipeline::PageProcessor::new(processed_dir);
         let device_name = sane_core::detect_hardware_scanner()
             .map_err(|e| format!("Аппаратный сбой при обнаружении сканера: {}", e))?;
         processor.process_page(&uuid_for_task, profile_opt.as_deref(), &device_name)
@@ -854,7 +864,9 @@ async fn process_scan_frame(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     // §1.3: Запись путей и вершин через FIFO-очередь
-    let store = session_store::global_session_store("./data.db");
+    let cfg = config::Config::load();
+    let db_path = cfg.paths.database_path().to_string_lossy().to_string();
+    let store = session_store::global_session_store(&db_path);
     if let Ok(s) = store.lock() {
         if let Ok(Some(spread)) = s.get_last_spread(&uuid) {
             let _ = write_queue::submit(write_queue::WriteTask::UpdateSpreadPaths {

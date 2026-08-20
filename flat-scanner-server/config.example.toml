@@ -1,14 +1,14 @@
-# Конфигурация Flat Scanner Server (Core Engine)
+# Конфигурация Flat Scanner (Core Engine + Client)
 #
 # Приоритет источников:
-#   1. CLI-флаги (--host, --port) — высший приоритет
+#   1. CLI-флаги (--host, --port) — высший приоритет (только сервер)
 #   2. Этот файл (config.toml)
-#   3. Дефолтные значения (127.0.0.1:54321)
+#   3. Дефолтные значения
 #
 # Путь к файлу:
 #   - $FLAT_SCANNER_CONFIG (переменная окружения, для systemd)
-#   - ~/.config/flat-scanner-server/config.toml
-#   - /etc/flat-scanner-server/config.toml (системный, устанавливается PKGBUILD)
+#   - ~/.config/flat-scanner/config.toml
+#   - /etc/flat-scanner/config.toml (системный, устанавливается PKGBUILD)
 
 [server]
 # Адрес привязки:
@@ -18,3 +18,16 @@ host = "127.0.0.1"
 
 # Порт HTTP-шлюза
 port = 54321
+
+[paths]
+# Базовый каталог для всех данных (поддерживается ~)
+base_dir = "~/.local/share/flat-scanner"
+
+# Подкаталоги относительно base_dir
+raw_dir = "raw"
+processed_dir = "processed"
+export_dir = "export"
+import_dir = "import"
+
+# База данных (относительно base_dir)
+database = "data.db"

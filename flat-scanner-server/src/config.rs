@@ -24,12 +24,15 @@ pub const DEFAULT_PORT: u16 = 54321;
 pub struct Config {
     /// Секция сетевого сервера.
     pub server: ServerConfig,
+    /// Секция путей хранения данных.
+    pub paths: PathsConfig,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             server: ServerConfig::default(),
+            paths: PathsConfig::default(),
         }
     }
 }
@@ -50,6 +53,95 @@ impl Default for ServerConfig {
             host: DEFAULT_HOST.to_string(),
             port: DEFAULT_PORT,
         }
+    }
+}
+
+/// Параметры путей хранения данных (XDG Base Directory Specification).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct PathsConfig {
+    /// Базовый каталог для всех данных (поддерживается ~).
+    pub base_dir: String,
+    /// Подкаталог для сырых сканов.
+    pub raw_dir: String,
+    /// Подкаталог для обработанных страниц.
+    pub processed_dir: String,
+    /// Подкаталог для экспорта PDF.
+    pub export_dir: String,
+    /// Подкаталог для импорта PDF.
+    pub import_dir: String,
+    /// Файл базы данных.
+    pub database: String,
+}
+
+impl Default for PathsConfig {
+    fn default() -> Self {
+        Self {
+            base_dir: "~/.local/share/flat-scanner".to_string(),
+            raw_dir: "raw".to_string(),
+            processed_dir: "processed".to_string(),
+            export_dir: "export".to_string(),
+            import_dir: "import".to_string(),
+            database: "data.db".to_string(),
+        }
+    }
+}
+
+impl PathsConfig {
+    /// Резолвит ~ в $HOME.
+    fn resolve_home(path: &str) -> PathBuf {
+        if let Some(rest) = path.strip_prefix("~/") {
+            if let Some(home) = dirs::home_dir() {
+                return home.join(rest);
+            }
+        }
+        PathBuf::from(path)
+    }
+
+    /// Возвращает абсолютный путь к базовому каталогу.
+    pub fn base_path(&self) -> PathBuf {
+        Self::resolve_home(&self.base_dir)
+    }
+
+    /// Возвращает абсолютный путь к каталогу сырых сканов.
+    pub fn raw_path(&self) -> PathBuf {
+        self.base_path().join(&self.raw_dir)
+    }
+
+    /// Возвращает абсолютный путь к каталогу обработанных страниц.
+    pub fn processed_path(&self) -> PathBuf {
+        self.base_path().join(&self.processed_dir)
+    }
+
+    /// Возвращает абсолютный путь к каталогу экспорта PDF.
+    pub fn export_path(&self) -> PathBuf {
+        self.base_path().join(&self.export_dir)
+    }
+
+    /// Возвращает абсолютный путь к каталогу импорта PDF.
+    pub fn import_path(&self) -> PathBuf {
+        self.base_path().join(&self.import_dir)
+    }
+
+    /// Возвращает абсолютный путь к базе данных.
+    pub fn database_path(&self) -> PathBuf {
+        self.base_path().join(&self.database)
+    }
+
+    /// Создаёт все каталоги из конфигурации.
+    pub fn create_directories(&self) -> Result<(), String> {
+        let dirs = [
+            self.base_path(),
+            self.raw_path(),
+            self.processed_path(),
+            self.export_path(),
+            self.import_path(),
+        ];
+        for dir in dirs {
+            std::fs::create_dir_all(&dir)
+                .map_err(|e| format!("Не удалось создать каталог {}: {}", dir.display(), e))?;
+        }
+        Ok(())
     }
 }
 
@@ -110,16 +202,16 @@ fn config_path() -> Option<PathBuf> {
         return Some(PathBuf::from(custom));
     }
 
-    // 2. Пользовательский каталог ~/.config/flat-scanner-server/config.toml
+    // 2. Пользовательский каталог ~/.config/flat-scanner/config.toml
     if let Some(config_dir) = dirs::config_dir() {
-        let user_path = config_dir.join("flat-scanner-server").join("config.toml");
+        let user_path = config_dir.join("flat-scanner").join("config.toml");
         if user_path.exists() {
             return Some(user_path);
         }
     }
 
-    // 3. Системный каталог /etc/flat-scanner-server/config.toml
-    let system_path = PathBuf::from("/etc/flat-scanner-server/config.toml");
+    // 3. Системный каталог /etc/flat-scanner/config.toml
+    let system_path = PathBuf::from("/etc/flat-scanner/config.toml");
     if system_path.exists() {
         return Some(system_path);
     }
@@ -145,10 +237,31 @@ mod tests {
             [server]
             host = "0.0.0.0"
             port = 8080
+
+            [paths]
+            base_dir = "~/.local/share/flat-scanner"
+            raw_dir = "raw"
+            processed_dir = "processed"
+            export_dir = "export"
+            import_dir = "import"
+            database = "data.db"
         "#;
         let cfg: Config = toml::from_str(toml_str).unwrap();
         assert_eq!(cfg.server.host, "0.0.0.0");
         assert_eq!(cfg.server.port, 8080);
+        assert_eq!(cfg.paths.base_dir, "~/.local/share/flat-scanner");
+        assert_eq!(cfg.paths.database, "data.db");
+    }
+
+    #[test]
+    fn paths_config_defaults() {
+        let paths = PathsConfig::default();
+        assert_eq!(paths.base_dir, "~/.local/share/flat-scanner");
+        assert_eq!(paths.raw_dir, "raw");
+        assert_eq!(paths.processed_dir, "processed");
+        assert_eq!(paths.export_dir, "export");
+        assert_eq!(paths.import_dir, "import");
+        assert_eq!(paths.database, "data.db");
     }
 
     #[test]
